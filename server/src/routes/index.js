@@ -8,6 +8,7 @@ import healthRouter from './health.routes.js';
 import authRouter from './auth.routes.js';          // Sprint 3
 import categoryRouter from './category.routes.js';  // Sprint 4
 import eventRouter from './event.routes.js';        // Sprint 4
+import bookingRouter from './booking.routes.js';    // Sprint 5
 
 const router = Router();
 
@@ -25,8 +26,8 @@ router.use('/events', eventRouter);
 // Sprint 3: Users profile management
 // router.use('/users', userRoutes);
 
-// Sprint 5: Booking system
-// router.use('/bookings', bookingRoutes);
+// ── Sprint 5: Seat Selection & Booking ──────────────────────────────────────
+router.use('/bookings', bookingRouter);
 
 // Sprint 6+: Reviews, Notifications, Analytics
 // router.use('/reviews', reviewRoutes);
