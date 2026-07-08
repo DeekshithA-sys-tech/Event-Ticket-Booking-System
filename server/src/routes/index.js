@@ -1,26 +1,13 @@
 /**
  * @file index.js
  * @description Root API router — mounts all sub-routers under /api/v1.
- *
- * WHY A CENTRAL ROUTER INDEX?
- * ----------------------------
- * Without this file, app.js would directly import and mount every route:
- *   app.use('/api/v1/auth', authRoutes);
- *   app.use('/api/v1/events', eventRoutes);
- *   ...10 more lines...
- *
- * Instead, app.js mounts ONE router:
- *   app.use('/api/v1', apiRouter);
- *
- * And THIS file handles all sub-routing. Benefit:
- *  - app.js stays clean — it only knows about /api/v1
- *  - Adding a new feature module only requires one line here
- *  - The API version prefix is in ONE place — changing v1 to v2 is trivial
  */
 
 import { Router } from 'express';
 import healthRouter from './health.routes.js';
-import authRouter from './auth.routes.js';        // ← Sprint 3
+import authRouter from './auth.routes.js';          // Sprint 3
+import categoryRouter from './category.routes.js';  // Sprint 4
+import eventRouter from './event.routes.js';        // Sprint 4
 
 const router = Router();
 
@@ -30,17 +17,15 @@ router.use('/health', healthRouter);
 // ── Sprint 3: Authentication & Authorization ──────────────────────────────────
 router.use('/auth', authRouter);
 
-// ── Upcoming Routes (added sprint by sprint) ──────────────────────────────────
-// Sprint 3: Users
+// ── Sprint 4: Event Management ────────────────────────────────────────────────
+router.use('/categories', categoryRouter);
+router.use('/events', eventRouter);
+
+// ── Upcoming Routes ───────────────────────────────────────────────────────────
+// Sprint 3: Users profile management
 // router.use('/users', userRoutes);
 
-// Sprint 4: Events
-// router.use('/events', eventRoutes);
-
-// Sprint 4: Categories
-// router.use('/categories', categoryRoutes);
-
-// Sprint 5: Bookings
+// Sprint 5: Booking system
 // router.use('/bookings', bookingRoutes);
 
 // Sprint 6+: Reviews, Notifications, Analytics
