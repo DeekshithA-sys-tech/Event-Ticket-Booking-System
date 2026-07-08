@@ -1,18 +1,4 @@
-/**
- * @file messages.js
- * @description Standard API response message strings.
- *
- * WHY CENTRALISE MESSAGES?
- * -------------------------
- * Inconsistent messages in a team project create bad UX:
- *  - 'User not found' vs 'user not found' vs 'No user found'
- *  - Translating the app becomes impossible if strings are scattered
- *
- * Centralising them here means:
- *  - Consistent tone and casing across all API responses
- *  - Easy to update wording in one place
- *  - Future i18n (internationalisation) just swaps this import
- */
+
 
 export const MESSAGES = Object.freeze({
   // ── Generic ──────────────────────────────────────────────────────────────────

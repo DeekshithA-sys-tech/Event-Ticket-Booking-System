@@ -10,12 +10,7 @@
  *  - Promise-based API out of the box
  *  - Better pipeline and pub/sub ergonomics
  *
- * WHY A SINGLETON CLIENT?
- * -----------------------
- * Redis connections are expensive. We create ONE client and export it.
- * All modules import this single client — no connection pools to manage
- * at the application level (ioredis handles the pool internally).
- *
+
  * GRACEFUL DEGRADATION:
  * ---------------------
  * In Sprint 2, Redis is not yet required for core functionality.
