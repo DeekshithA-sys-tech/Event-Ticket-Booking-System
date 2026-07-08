@@ -1,28 +1,4 @@
 /**
- * @file error.middleware.js
- * @description Global, centralised error handling middleware.
- *
- * WHY CENTRALISED ERROR HANDLING?
- * ---------------------------------
- * Without this, every controller must:
- *   1. Catch its own errors
- *   2. Format an error response
- *   3. Know what status code to use
- *
- * This violates the Single Responsibility Principle — controllers should ONLY
- * handle HTTP request/response mapping, not error formatting.
- *
- * With this middleware:
- *   - Controllers throw errors (using our custom error classes)
- *   - asyncHandler forwards them to next(error)
- *   - THIS middleware is the ONLY place that formats error responses
- *   - Consistent error shape across the entire API
- *
- * EXPRESS ERROR MIDDLEWARE SIGNATURE:
- * ------------------------------------
- * Express identifies error middleware by the 4-parameter signature: (err, req, res, next)
- * It MUST be registered AFTER all routes in app.js.
- *
  * HANDLED ERROR TYPES:
  * --------------------
  * 1. Our custom AppError subclasses (NotFoundError, ValidationError, etc.)
@@ -38,20 +14,12 @@ import { HTTP_STATUS } from '../constants/httpStatus.js';
 import { env } from '../config/env.js';
 import { logger } from '../utils/logger.js';
 
-/**
- * Converts a Mongoose CastError (invalid ObjectId) to a NotFoundError.
- * @param {mongoose.Error.CastError} err
- * @returns {NotFoundError}
- */
+
 const handleCastError = (err) => {
   return new NotFoundError(`Invalid ${err.path}: ${err.value}. Resource not found.`);
 };
 
-/**
- * Converts Mongoose validation errors to our ValidationError class.
- * @param {mongoose.Error.ValidationError} err
- * @returns {ValidationError}
- */
+
 const handleMongooseValidationError = (err) => {
   const errors = Object.values(err.errors).map((el) => ({
     field: el.path,
@@ -60,11 +28,7 @@ const handleMongooseValidationError = (err) => {
   return new ValidationError('Database validation failed.', errors);
 };
 
-/**
- * Converts MongoDB duplicate key error (11000) to a ConflictError.
- * @param {object} err - MongoDB error with code 11000
- * @returns {AppError}
- */
+
 const handleDuplicateKeyError = (err) => {
   const field = Object.keys(err.keyValue || {})[0] || 'field';
   const value = err.keyValue?.[field];
@@ -73,11 +37,7 @@ const handleDuplicateKeyError = (err) => {
   return new AppError(message, HTTP_STATUS.CONFLICT);
 };
 
-/**
- * Converts JWT errors to AuthenticationError.
- * @param {Error} err - JWT error (JsonWebTokenError or TokenExpiredError)
- * @returns {AuthenticationError}
- */
+
 const handleJWTError = (err) => {
   const message =
     err.name === 'TokenExpiredError'
@@ -86,16 +46,8 @@ const handleJWTError = (err) => {
   return new AuthenticationError(message);
 };
 
-/**
- * Global error handling middleware.
- * Must have 4 parameters for Express to recognise it as error middleware.
- *
- * @param {Error} err - The error that was thrown or passed to next()
- * @param {import('express').Request} req
- * @param {import('express').Response} res
- * @param {import('express').NextFunction} _next - Unused but required by Express signature
- */
-// eslint-disable-next-line no-unused-vars
+
+
 export const errorMiddleware = (err, req, res, _next) => {
   // ── Log the error ──────────────────────────────────────────────────────────
   // Always log operational errors at 'warn', programming errors at 'error'

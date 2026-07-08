@@ -16,26 +16,21 @@
  *  - app.js stays clean — it only knows about /api/v1
  *  - Adding a new feature module only requires one line here
  *  - The API version prefix is in ONE place — changing v1 to v2 is trivial
- *
- * PLACEHOLDER ROUTES:
- * --------------------
- * Routes for Auth, Events, Bookings, etc. are imported here but will return
- * 404/501 until implemented in future sprints. We stub them now so the
- * import tree is established and tests have targets to hit.
  */
 
 import { Router } from 'express';
 import healthRouter from './health.routes.js';
+import authRouter from './auth.routes.js';        // ← Sprint 3
 
 const router = Router();
 
 // ── Health Check ──────────────────────────────────────────────────────────────
 router.use('/health', healthRouter);
 
-// ── Feature Routes (added sprint by sprint) ───────────────────────────────────
-// Sprint 3: Authentication
-// router.use('/auth', authRoutes);
+// ── Sprint 3: Authentication & Authorization ──────────────────────────────────
+router.use('/auth', authRouter);
 
+// ── Upcoming Routes (added sprint by sprint) ──────────────────────────────────
 // Sprint 3: Users
 // router.use('/users', userRoutes);
 
