@@ -10,6 +10,7 @@ import categoryRouter from './category.routes.js';  // Sprint 4
 import eventRouter from './event.routes.js';        // Sprint 4
 import bookingRouter from './booking.routes.js';    // Sprint 5
 import userRouter from './user.routes.js';          // Sprint 6
+import searchRouter from './search.routes.js';      // Sprint 7
 
 const router = Router();
 
@@ -33,7 +34,10 @@ router.use('/bookings', bookingRouter);
 // ── Sprint 6: User Profile Management ────────────────────────────────
 router.use('/users', userRouter);
 
-// Sprint 6+: Reviews, Notifications, Analytics
+// ── Sprint 7: Search & Discovery ───────────────────────────────────
+router.use('/search', searchRouter);
+
+// Sprint 8+: Reviews, Notifications, Analytics
 // router.use('/reviews', reviewRoutes);
 // router.use('/notifications', notificationRoutes);
 // router.use('/analytics', analyticsRoutes);

@@ -170,7 +170,8 @@ bookingSchema.index({ user: 1, createdAt: -1 });
 bookingSchema.index({ event: 1, status: 1 });
 
 // Human-readable ID lookup (support/ticket scanning)
-bookingSchema.index({ bookingId: 1 });
+// Note: bookingId has unique:true on the field definition, which creates
+// the index implicitly — no need for a redundant schema.index() call here.
 
 // Status-based queries (admin dashboard)
 bookingSchema.index({ status: 1, createdAt: -1 });
