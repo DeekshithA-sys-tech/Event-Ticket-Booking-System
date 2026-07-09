@@ -80,10 +80,14 @@ export const findUserByResetToken = async (hashedToken) => {
  * @param {string} options.sort
  * @returns {Promise<{ users: Document[], total: number }>}
  */
-export const findAllUsers = async (filter = {}, { page = 1, limit = 10, sort = '-createdAt' } = {}) => {
-  const skip = (page - 1) * limit;
+export const findAllUsers = async (filter = {}, { skip = 0, limit = 10, sortObj = { createdAt: -1 } } = {}) => {
   const [users, total] = await Promise.all([
-    User.find(filter).sort(sort).skip(skip).limit(limit).exec(),
+    User.find(filter)
+      .sort(sortObj)
+      .skip(skip)
+      .limit(limit)
+      .lean()
+      .exec(),
     User.countDocuments(filter),
   ]);
   return { users, total };

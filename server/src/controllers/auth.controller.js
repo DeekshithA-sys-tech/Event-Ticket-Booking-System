@@ -127,3 +127,54 @@ export const getMe = asyncHandler(async (req, res) => {
     .status(HTTP_STATUS.OK)
     .json(new ApiResponse(HTTP_STATUS.OK, MESSAGES.USER.FETCHED, req.user));
 });
+
+// ─── Change Password ──────────────────────────────────────────────────────────
+
+/**
+ * @swagger
+ * /auth/change-password:
+ *   post:
+ *     tags: [Auth]
+ *     summary: Change password (authenticated user)
+ *     description: |
+ *       Requires the current password for verification.
+ *       After a successful change, ALL refresh tokens are revoked,
+ *       forcing re-login on all devices.
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [currentPassword, newPassword, confirmPassword]
+ *             properties:
+ *               currentPassword:
+ *                 type: string
+ *               newPassword:
+ *                 type: string
+ *                 minLength: 8
+ *               confirmPassword:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: Password changed successfully — user must log in again
+ *       401:
+ *         description: Current password is incorrect
+ */
+export const changePassword = asyncHandler(async (req, res) => {
+  const { currentPassword, newPassword } = req.body;
+
+  await authService.changePassword(req.user._id, currentPassword, newPassword);
+
+  // Clear the refresh token cookie — all server-side tokens were revoked
+  // The user must log in again with the new password
+  res.clearCookie('refreshToken', {
+    ...getRefreshTokenCookieOptions(),
+    maxAge: 0,
+  });
+
+  return res
+    .status(HTTP_STATUS.OK)
+    .json(new ApiResponse(HTTP_STATUS.OK, MESSAGES.AUTH.PASSWORD_CHANGED));
+});
+

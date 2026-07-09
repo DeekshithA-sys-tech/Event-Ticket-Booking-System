@@ -36,6 +36,7 @@ import {
   loginSchema,
   forgotPasswordSchema,
   resetPasswordSchema,
+  changePasswordSchema,
 } from '../validators/auth.validator.js';
 
 /**
@@ -87,6 +88,14 @@ router.post('/reset-password',
 router.get('/me',
   protect,
   authController.getMe
+);
+
+// Change password — requires current password verification
+router.post('/change-password',
+  protect,
+  authRateLimiter,
+  validate(changePasswordSchema),
+  authController.changePassword
 );
 
 export default router;

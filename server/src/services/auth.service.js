@@ -235,3 +235,54 @@ export const resetPassword = async (rawToken, newPassword) => {
 
   logger.info(`Password reset successful for user: ${user.email}`);
 };
+
+// ─── Change Password ──────────────────────────────────────────────────────────
+
+/**
+ * Changes a user's password while they are authenticated.
+ *
+ * WHY REQUIRE CURRENT PASSWORD HERE BUT NOT IN RESET PASSWORD?
+ * ─────────────────────────────────────────────────────────────
+ * Reset Password is used when the user CANNOT log in (they forgot it).
+ * The reset TOKEN proves identity — issued to a verified email address.
+ *
+ * Change Password is used when the user IS logged in.
+ * Even though they have a valid JWT, we still require the current password.
+ * Why? If someone steals the user's device with an active session, they could
+ * silently change the password and lock the real user out permanently.
+ * Requiring the current password stops this attack.
+ *
+ * @param {string} userId - Authenticated user's ID
+ * @param {string} currentPassword - The user's existing password (plaintext)
+ * @param {string} newPassword - The desired new password (will be hashed by model hook)
+ */
+export const changePassword = async (userId, currentPassword, newPassword) => {
+  // Fetch user with password (normally excluded by select: false)
+  const user = await userRepo.findUserById(userId);
+
+  // We need the password field explicitly — fetch with +password
+  const userWithPassword = await import('../models/user.model.js').then((m) =>
+    m.default.findById(userId).select('+password')
+  );
+
+  if (!userWithPassword) {
+    throw new AuthenticationError(MESSAGES.AUTH.UNAUTHORIZED);
+  }
+
+  // Verify current password before allowing the change
+  const isCurrentValid = await userWithPassword.comparePassword(currentPassword);
+  if (!isCurrentValid) {
+    throw new AuthenticationError('Current password is incorrect.');
+  }
+
+  // Set new password — the pre-save hook will hash it
+  userWithPassword.password = newPassword;
+  await userRepo.saveUser(userWithPassword);
+
+  // Revoke ALL existing refresh tokens — forces re-login on all devices
+  // This ensures that if the change was triggered by a compromised session,
+  // that session is immediately invalidated after the password change.
+  await tokenRepo.deleteAllUserRefreshTokens(userId);
+
+  logger.info(`Password changed for user: ${userWithPassword.email}`);
+};
