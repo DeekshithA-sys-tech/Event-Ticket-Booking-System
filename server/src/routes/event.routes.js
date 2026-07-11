@@ -33,6 +33,7 @@ import {
   eventParamSchema,
   eventListQuerySchema,
 } from '../validators/event.validator.js';
+import { eventReviewsRouter } from './review.routes.js'; // Sprint 8
 
 const router = Router();
 
@@ -91,5 +92,10 @@ router.patch(
   validate(updateEventStatusSchema),
   eventController.updateEventStatus
 );
+
+// ── Sprint 8: Event Reviews (nested resource) ────────────────────────────
+// GET /events/:eventId/reviews → public (optional auth for admin extras)
+// mergeParams: true in eventReviewsRouter allows it to read :eventId
+router.use('/:eventId/reviews', eventReviewsRouter);
 
 export default router;

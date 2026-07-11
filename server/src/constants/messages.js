@@ -84,4 +84,18 @@ export const MESSAGES = Object.freeze({
     OK: 'Server is healthy.',
     DB_ERROR: 'Database connection is unhealthy.',
   },
+
+  // ── Reviews ───────────────────────────────────────────────────────────────────
+  REVIEW: {
+    CREATED: 'Review submitted successfully.',
+    UPDATED: 'Review updated successfully.',
+    DELETED: 'Review deleted successfully.',
+    FETCHED: 'Review fetched successfully.',
+    LIST_FETCHED: 'Reviews fetched successfully.',
+    NOT_FOUND: 'Review not found.',
+    ALREADY_REVIEWED: 'You have already reviewed this event.',
+    NOT_ELIGIBLE: 'You can only review events you have attended with a confirmed booking.',
+    FLAGGED: 'Review has been flagged for moderation.',
+    UNFLAGGED: 'Review flag has been removed.',
+  },
 });

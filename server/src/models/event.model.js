@@ -199,6 +199,26 @@ const eventSchema = new mongoose.Schema(
       default: EVENT_STATUS.DRAFT,
     },
 
+    // ── Rating Aggregation (Sprint 8) ─────────────────────────────────────────
+    // Denormalised from the Review collection.
+    // Updated automatically by review.model.js post-save/update/delete hooks.
+    //
+    // WHY STORE ON EVENT?
+    //   Fast filter queries: GET /events?minRating=4 uses an index.
+    //   Without this, every events list query would need an expensive
+    //   cross-collection GROUP BY to compute the average.
+    rating: {
+      average: { type: Number, default: 0, min: 0, max: 5 },
+      count: { type: Number, default: 0, min: 0 },
+      distribution: {
+        1: { type: Number, default: 0 },
+        2: { type: Number, default: 0 },
+        3: { type: Number, default: 0 },
+        4: { type: Number, default: 0 },
+        5: { type: Number, default: 0 },
+      },
+    },
+
     // ── Seat Layout ───────────────────────────────────────────────────────────
     // Embedded array of rows, each containing an array of seats
     seatLayout: [rowSchema],
@@ -234,6 +254,7 @@ eventSchema.index({ date: 1 });
 eventSchema.index({ status: 1 });
 eventSchema.index({ organizer: 1 });
 eventSchema.index({ availableSeats: 1 });
+eventSchema.index({ 'rating.average': -1 }); // Sprint 8: filter by min rating
 // Compound index for the most common query: published events in a city filtered by date
 eventSchema.index({ status: 1, city: 1, date: 1 });
 

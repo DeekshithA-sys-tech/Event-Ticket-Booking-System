@@ -64,3 +64,41 @@ export const protect = asyncHandler(async (req, _res, next) => {
   req.user = user;
   next();
 });
+
+/**
+ * Optional authentication middleware.
+ * Same as protect, but NEVER throws — it simply skips setting req.user
+ * if no valid token is provided.
+ *
+ * USE CASE: Public endpoints that grant extra capabilities to admins.
+ *   Example: GET /events/:id/reviews
+ *   - Public users: see only non-flagged reviews
+ *   - Admins (with valid token): can pass ?includeFlagged=true
+ *
+ * The route handler must check `if (req.user)` before using req.user.
+ */
+export const optionalProtect = async (req, _res, next) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      req.user = null;
+      return next();
+    }
+
+    const token = authHeader.split(' ')[1];
+    if (!token) {
+      req.user = null;
+      return next();
+    }
+
+    const decoded = verifyAccessToken(token);
+    const user = await User.findById(decoded.id);
+
+    req.user = user?.isActive ? user : null;
+  } catch {
+    // Any error (expired token, invalid signature, etc.) → unauthenticated
+    req.user = null;
+  }
+  next();
+};
+
