@@ -12,6 +12,7 @@ import bookingRouter from './booking.routes.js';    // Sprint 5
 import userRouter from './user.routes.js';          // Sprint 6
 import searchRouter from './search.routes.js';      // Sprint 7
 import reviewRouter from './review.routes.js';      // Sprint 8
+import analyticsRouter from './analytics.routes.js'; // Sprint 9
 
 const router = Router();
 
@@ -42,8 +43,10 @@ router.use('/search', searchRouter);
 router.use('/reviews', reviewRouter);
 // GET /events/:eventId/reviews is mounted in event.routes.js
 
-// Sprint 9+: Notifications, Analytics
+// ── Sprint 9: Organizer Analytics Dashboard ──────────────────────
+router.use('/analytics', analyticsRouter);
+
+// Sprint 10+: Email Notifications, PDF Tickets
 // router.use('/notifications', notificationRoutes);
-// router.use('/analytics', analyticsRoutes);
 
 export default router;
