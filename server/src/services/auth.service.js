@@ -7,7 +7,8 @@ import {
   getRefreshTokenExpiryDate,
 } from '../utils/generateTokens.js';
 import { hashToken, generateSecureToken } from '../utils/hashToken.js';
-import { sendEmail, passwordResetTemplate, welcomeEmailTemplate } from '../utils/sendEmail.js';
+import { sendEmail } from '../utils/sendEmail.js';
+import { addEmailJob } from '../jobs/queues/email.queue.js';
 import { ConflictError, AuthenticationError, NotFoundError } from '../utils/ApiError.js';
 import { MESSAGES } from '../constants/messages.js';
 import { createModuleLogger } from '../utils/logger.js';
@@ -62,14 +63,9 @@ export const register = async ({ name, email, password, role }, meta) => {
   // ── Issue tokens ─────────────────────────────────────────────────────────
   const { accessToken, refreshToken } = await issueTokenPair(user, meta);
 
-  // ── Send welcome email (non-blocking — don't await) ──────────────────────
-  // We don't await so email failure doesn't block the registration response.
-  // In Sprint 10 this moves to a BullMQ job for retry capability.
-  sendEmail({
-    to: user.email,
-    subject: 'Welcome to Event Ticket Booking! 🎟',
-    html: welcomeEmailTemplate(user.name),
-  }).catch((err) => logger.warn(`Welcome email failed for ${user.email}: ${err.message}`));
+  // ── Enqueue welcome email (BullMQ — reliable + retryable) ──────────────────
+  // Replaces the old fire-and-forget sendEmail() call.
+  await addEmailJob('welcome', { to: user.email, name: user.name });
 
   // Return the user without sensitive fields (toJSON handles this)
   return { user, accessToken, refreshToken };
@@ -194,13 +190,12 @@ export const forgotPassword = async (email, clientUrl) => {
   // The frontend form will POST the token + new password to /api/v1/auth/reset-password
   const resetUrl = `${clientUrl}/reset-password?token=${rawToken}`;
 
-  // ── Send email ────────────────────────────────────────────────────────────
+  // ── Send password reset email ─────────────────────────────────────────────────
+  // Password reset uses sendEmail directly (not queued) because:
+  // If email fails, we MUST clean up the stored token so the user can retry.
+  // A queued job doesn't give us this synchronous error feedback.
   try {
-    await sendEmail({
-      to: user.email,
-      subject: 'Password Reset Request — Event Ticket Booking',
-      html: passwordResetTemplate(user.name, resetUrl),
-    });
+    await addEmailJob('passwordReset', { to: user.email, name: user.name, resetUrl });
     logger.info(`Password reset email sent to ${user.email}`);
   } catch (error) {
     // If email fails, clean up the reset token so the user can try again

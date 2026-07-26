@@ -8,6 +8,8 @@ import { asyncHandler } from '../utils/asyncHandler.js';
 import { ApiResponse } from '../utils/ApiResponse.js';
 import { HTTP_STATUS } from '../constants/httpStatus.js';
 import { MESSAGES } from '../constants/messages.js';
+import { generatePdfTicket } from '../utils/generatePdfTicket.js';
+
 
 /**
  * @swagger
@@ -205,3 +207,60 @@ export const cancelBooking = asyncHandler(async (req, res) => {
     .status(HTTP_STATUS.OK)
     .json(new ApiResponse(HTTP_STATUS.OK, MESSAGES.BOOKING.CANCELLED));
 });
+
+// ─── Download PDF Ticket ───────────────────────────────────────────────────────
+
+/**
+ * @swagger
+ * /bookings/{bookingId}/ticket:
+ *   get:
+ *     tags: [Bookings]
+ *     summary: Download PDF ticket for a confirmed booking
+ *     description: |
+ *       Streams a PDF ticket file with embedded QR code.
+ *       The PDF is generated on-demand and returned as a download.
+ *       Only the booking owner or an admin can download the ticket.
+ *     parameters:
+ *       - name: bookingId
+ *         in: path
+ *         required: true
+ *         schema:
+ *           type: string
+ *         example: TKT-20240715-X7K2M
+ *     responses:
+ *       200:
+ *         description: PDF file (application/pdf)
+ *         headers:
+ *           Content-Disposition:
+ *             schema:
+ *               type: string
+ *               example: attachment; filename="ticket-TKT-20240715-X7K2M.pdf"
+ *       403:
+ *         description: Cannot download another user's ticket
+ *       404:
+ *         description: Booking not found
+ */
+export const downloadTicketPdf = asyncHandler(async (req, res) => {
+  // 1. Fetch booking (ownership check built-in — throws 403 if not owner/admin)
+  const booking = await bookingService.getBookingById(
+    req.params.bookingId,
+    req.user._id,
+    req.user.role
+  );
+
+  // 2. Set PDF response headers
+  const filename = `ticket-${booking.bookingId}.pdf`;
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+
+  // 3. Stream PDF directly to response — no temp file needed
+  await generatePdfTicket({
+    event: booking.event,
+    booking,
+    user: booking.user,
+    qrCode: booking.qrCode || null,
+    stream: res,
+  });
+  // generatePdfTicket calls doc.end() which closes the response stream
+});
+

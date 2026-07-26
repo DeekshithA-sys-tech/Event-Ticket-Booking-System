@@ -8,17 +8,20 @@
  * Only customers and admins can book tickets.
  * Organizers cannot book tickets (they manage events).
  *
- * POST /bookings/lock-seats        → Customer only
- * POST /bookings/confirm           → Customer only
- * GET  /bookings/my-bookings       → Authenticated (any role)
- * GET  /bookings/:bookingId        → Owner or Admin
- * POST /bookings/:bookingId/cancel → Owner or Admin
+ * POST /bookings/lock-seats             → Customer only
+ * POST /bookings/confirm                → Customer only
+ * GET  /bookings/my-bookings            → Authenticated (any role)
+ * GET  /bookings/:bookingId             → Owner or Admin
+ * POST /bookings/:bookingId/cancel      → Owner or Admin
+ * GET  /bookings/:bookingId/ticket      → Owner or Admin (Sprint 10: PDF download)
  *
  * NOTE ON ROUTE ORDER:
  * --------------------
  * '/lock-seats', '/confirm', '/my-bookings' must be registered
  * BEFORE '/:bookingId' — otherwise Express would treat those
  * static segments as bookingId param values.
+ * '/:bookingId/ticket' is registered after '/:bookingId' — Express
+ * correctly matches the full path before the shorter param pattern.
  */
 
 import { Router } from 'express';
@@ -73,4 +76,14 @@ router.post(
   bookingController.cancelBooking
 );
 
+// ── Sprint 10: PDF Ticket Download ────────────────────────────────────────────
+// Generates a PDF ticket on-demand and streams it to the client.
+// No temp file — PDFKit pipes directly to the Express response stream.
+router.get(
+  '/:bookingId/ticket',
+  validate(bookingParamSchema),
+  bookingController.downloadTicketPdf
+);
+
 export default router;
+

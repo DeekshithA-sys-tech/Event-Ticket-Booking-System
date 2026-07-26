@@ -45,6 +45,7 @@ import { connectRedis } from './config/redis.js';
 import { configureCloudinary } from './config/cloudinary.js';
 import { env } from './config/env.js';
 import { logger } from './utils/logger.js';
+import { startEmailWorker, stopEmailWorker } from './jobs/workers/email.worker.js'; // Sprint 10
 
 // ─── Bootstrap Function ───────────────────────────────────────────────────────
 const bootstrap = async () => {
@@ -55,10 +56,14 @@ const bootstrap = async () => {
     // ── Step 2: Redis (optional in early sprints) ────────────────────────────
     await connectRedis();
 
-    // ── Step 3: Cloudinary ────────────────────────────────────────────────────
+    // ── Step 3: Cloudinary ──────────────────────────────────────────────────────────────────────
     configureCloudinary();
 
-    // ── Step 4: Start HTTP Server ─────────────────────────────────────────────
+    // ── Step 4: Email Worker (BullMQ) ────────────────────────────────────────────────────────────────
+    // Start AFTER Redis connects — BullMQ needs Redis to be available
+    startEmailWorker();
+
+    // ── Step 5: Start HTTP Server ────────────────────────────────────────────────────────────────
     const httpServer = createServer(app);
 
     httpServer.listen(env.PORT, () => {
@@ -94,6 +99,12 @@ const bootstrap = async () => {
           } catch {
             // Redis might not have connected — that's fine
           }
+
+          // Close email worker (Sprint 10)
+          await stopEmailWorker();
+          const { closeEmailQueue } = await import('./jobs/queues/email.queue.js');
+          await closeEmailQueue();
+          logger.info('[EmailWorker] Email worker and queue closed.');
 
           logger.info('[Server] Graceful shutdown complete. Goodbye! 👋');
           process.exit(0);

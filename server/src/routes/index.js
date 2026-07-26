@@ -26,10 +26,6 @@ router.use('/auth', authRouter);
 router.use('/categories', categoryRouter);
 router.use('/events', eventRouter);
 
-// ── Upcoming Routes ───────────────────────────────────────────────────────────
-// Sprint 3: Users profile management
-// router.use('/users', userRoutes);
-
 // ── Sprint 5: Seat Selection & Booking ──────────────────────────────────────
 router.use('/bookings', bookingRouter);
 
@@ -46,7 +42,9 @@ router.use('/reviews', reviewRouter);
 // ── Sprint 9: Organizer Analytics Dashboard ──────────────────────
 router.use('/analytics', analyticsRouter);
 
-// Sprint 10+: Email Notifications, PDF Tickets
-// router.use('/notifications', notificationRoutes);
+// ── Sprint 10: Email Notifications & PDF Tickets ──────────────────
+// No new router — emails run via BullMQ worker (src/jobs/)
+// New route: GET /bookings/:bookingId/ticket (in booking.routes.js)
 
 export default router;
+

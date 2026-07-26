@@ -66,8 +66,11 @@ export const env = Object.freeze({
   JWT_ACCESS_EXPIRY: process.env.JWT_ACCESS_EXPIRY || '15m',
   JWT_REFRESH_EXPIRY: process.env.JWT_REFRESH_EXPIRY || '7d',
 
-  // ── Redis ────────────────────────────────────────────────────────────────────
+  // ── Redis ─────────────────────────────────────────────────────────────────
   REDIS_URL: process.env.REDIS_URL || 'redis://localhost:6379',
+  // Separate Redis for BullMQ job queues (can be same instance in dev)
+  // In production, use a dedicated Redis for BullMQ vs caching Redis
+  BULLMQ_REDIS_URL: process.env.BULLMQ_REDIS_URL || process.env.REDIS_URL || 'redis://localhost:6379',
 
   // ── Cloudinary ───────────────────────────────────────────────────────────────
   CLOUDINARY_CLOUD_NAME: process.env.CLOUDINARY_CLOUD_NAME || '',

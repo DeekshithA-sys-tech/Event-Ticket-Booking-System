@@ -67,7 +67,7 @@ import * as eventRepo from '../repositories/event.repository.js';
 import { lockSeats, releaseSeats, verifyLocks } from '../utils/seatLock.js';
 import { generateBookingId } from '../utils/generateBookingId.js';
 import { generateQrCode } from '../utils/generateQrCode.js';
-import { sendEmail } from '../utils/sendEmail.js';
+import { addEmailJob } from '../jobs/queues/email.queue.js';
 import {
   NotFoundError,
   ValidationError,
@@ -81,6 +81,7 @@ import { buildPaginationMeta } from '../utils/ApiResponse.js';
 import { createModuleLogger } from '../utils/logger.js';
 
 const logger = createModuleLogger('BookingService');
+
 
 // ─── Helper: Find and validate seats from event layout ────────────────────────
 /**
@@ -299,19 +300,58 @@ export const confirmBooking = async (eventId, seatIds, userId) => {
   await bookingRepo.updateBookingById(confirmedBooking._id, { qrCode });
   confirmedBooking.qrCode = qrCode;
 
-  // ── Send confirmation email (non-blocking) ────────────────────────────────
+  // ── Enqueue confirmation email (reliable, retryable via BullMQ) ─────────
+  // Replaces the old fire-and-forget sendEmail() call.
+  // The worker fetches data from DB, builds the template, and sends via SMTP.
   const userDoc = await import('../models/user.model.js').then((m) =>
     m.default.findById(userId).select('name email')
   );
 
   if (userDoc) {
-    sendEmail({
+    await addEmailJob('booking_confirmation', {
       to: userDoc.email,
-      subject: `Booking Confirmed: ${event.title} 🎟`,
-      html: bookingConfirmationTemplate(userDoc.name, event, confirmedBooking, qrCode),
-    }).catch((err) =>
-      logger.warn(`[Booking] Email failed for booking ${bookingId}: ${err.message}`)
-    );
+      name: userDoc.name,
+      event: {
+        title: event.title,
+        date: event.date,
+        time: event.time,
+        venue: event.venue,
+        city: event.city,
+      },
+      booking: {
+        bookingId: confirmedBooking.bookingId,
+        seats: confirmedBooking.seats,
+        totalAmount: confirmedBooking.totalAmount,
+      },
+      qrCode,
+    });
+
+    // ── Schedule 24-hour reminder ────────────────────────────────────────
+    // Calculate delay: event.date - 24h - now
+    // If event is less than 24h away, skip the reminder.
+    const msUntilReminder = new Date(event.date).getTime() - Date.now() - 24 * 60 * 60 * 1000;
+    if (msUntilReminder > 0) {
+      await addEmailJob(
+        'event_reminder',
+        {
+          to: userDoc.email,
+          name: userDoc.name,
+          event: {
+            title: event.title,
+            date: event.date,
+            time: event.time,
+            venue: event.venue,
+            city: event.city,
+          },
+          booking: {
+            bookingId: confirmedBooking.bookingId,
+            seats: confirmedBooking.seats,
+          },
+        },
+        { delay: msUntilReminder }
+      );
+      logger.info(`[Booking] Reminder scheduled ${Math.round(msUntilReminder / 3600000)}h from now for booking ${bookingId}`);
+    }
   }
 
   return { booking: confirmedBooking, qrCode };
@@ -446,70 +486,32 @@ export const cancelBooking = async (bookingId, userId, userRole, reason) => {
   } finally {
     await session.endSession();
   }
+
+  // ── Enqueue cancellation email ────────────────────────────────────────────
+  const userDoc = await import('../models/user.model.js').then((m) =>
+    m.default.findById(booking.user._id || booking.user).select('name email')
+  );
+  const eventDoc = await eventRepo.findEventById(booking.event._id || booking.event);
+
+  if (userDoc && eventDoc) {
+    await addEmailJob('booking_cancellation', {
+      to: userDoc.email,
+      name: userDoc.name,
+      event: {
+        title: eventDoc.title,
+        date: eventDoc.date,
+        time: eventDoc.time,
+        venue: eventDoc.venue,
+        city: eventDoc.city,
+      },
+      booking: {
+        bookingId,
+        seats: booking.seats,
+        totalAmount: booking.totalAmount,
+        cancellationReason: reason || null,
+      },
+    });
+  }
 };
 
-// ─── Email Template ───────────────────────────────────────────────────────────
-/**
- * Booking confirmation email HTML template.
- * Embedded inline for Sprint 5; will move to template files in Sprint 10.
- */
-const bookingConfirmationTemplate = (name, event, booking, qrCode) => `
-<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <style>
-    body { font-family: Arial, sans-serif; color: #333; max-width: 600px; margin: 0 auto; }
-    .header { background: #6366f1; color: white; padding: 24px; text-align: center; border-radius: 8px 8px 0 0; }
-    .body { padding: 32px; background: #f9fafb; }
-    .info-box { background: white; border-radius: 8px; padding: 20px; margin: 16px 0; border: 1px solid #e5e7eb; }
-    .label { color: #6b7280; font-size: 12px; text-transform: uppercase; font-weight: bold; }
-    .value { color: #111827; font-size: 16px; margin-top: 4px; margin-bottom: 12px; }
-    .qr-container { text-align: center; padding: 20px; background: white; border-radius: 8px; margin: 16px 0; }
-    .booking-id { font-family: monospace; font-size: 20px; font-weight: bold; color: #6366f1; letter-spacing: 2px; }
-    .footer { padding: 16px; text-align: center; color: #9ca3af; font-size: 12px; }
-    .seat-badge { display: inline-block; background: #6366f1; color: white; padding: 4px 10px; border-radius: 20px; margin: 4px; font-size: 13px; }
-  </style>
-</head>
-<body>
-  <div class="header">
-    <h2>🎟 Booking Confirmed!</h2>
-    <p style="margin:0; opacity:0.9">Your tickets are ready</p>
-  </div>
-  <div class="body">
-    <p>Hi <strong>${name}</strong>, your booking has been confirmed! 🎉</p>
-    
-    <div class="info-box">
-      <div class="label">Booking ID</div>
-      <div class="booking-id">${booking.bookingId}</div>
-      
-      <div class="label">Event</div>
-      <div class="value">${event.title}</div>
-      
-      <div class="label">Date & Time</div>
-      <div class="value">${new Date(event.date).toLocaleDateString('en-IN', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })} at ${event.time}</div>
-      
-      <div class="label">Venue</div>
-      <div class="value">${event.venue}, ${event.city}</div>
-      
-      <div class="label">Your Seats</div>
-      <div class="value">
-        ${booking.seats.map((s) => `<span class="seat-badge">Row ${s.row} · Seat ${s.seatNumber}</span>`).join('')}
-      </div>
-      
-      <div class="label">Total Paid</div>
-      <div class="value">₹${booking.totalAmount.toLocaleString('en-IN')}</div>
-    </div>
-    
-    <div class="qr-container">
-      <p style="color:#6b7280; margin-bottom: 12px;">Present this QR code at the venue entrance</p>
-      <img src="${qrCode}" alt="QR Code" style="width: 200px; height: 200px;" />
-    </div>
-  </div>
-  <div class="footer">
-    <p>© ${new Date().getFullYear()} Event Ticket Booking. All rights reserved.</p>
-    <p>Keep this email as your ticket. Arrive 30 minutes before the event.</p>
-  </div>
-</body>
-</html>
-`;
+
