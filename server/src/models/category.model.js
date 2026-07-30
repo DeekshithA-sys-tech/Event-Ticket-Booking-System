@@ -64,8 +64,9 @@ const categorySchema = new mongoose.Schema(
 );
 
 // ─── Indexes ──────────────────────────────────────────────────────────────────
-categorySchema.index({ slug: 1 });
+// Note: name and slug indexes are created automatically via `unique: true` above.
 categorySchema.index({ isActive: 1 });
+
 
 // ─── Pre-Save Hook: Auto-generate slug ────────────────────────────────────────
 categorySchema.pre('save', function (next) {

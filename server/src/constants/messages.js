@@ -1,5 +1,4 @@
 
-
 export const MESSAGES = Object.freeze({
   // ── Generic ──────────────────────────────────────────────────────────────────
   SUCCESS: 'Operation successful',
@@ -98,4 +97,14 @@ export const MESSAGES = Object.freeze({
     FLAGGED: 'Review has been flagged for moderation.',
     UNFLAGGED: 'Review flag has been removed.',
   },
+
+  // ── Admin ─────────────────────────────────────────────────────────────────────
+  ADMIN: {
+    DASHBOARD_FETCHED: 'Platform dashboard fetched successfully.',
+    EVENT_STATUS_UPDATED: 'Event status updated by admin.',
+    BOOKING_CANCELLED: 'Booking force-cancelled by admin.',
+    AUDIT_LOGS_FETCHED: 'Audit logs fetched successfully.',
+    HEALTH_FETCHED: 'System health status fetched.',
+  },
 });
+

@@ -13,6 +13,7 @@ import userRouter from './user.routes.js';          // Sprint 6
 import searchRouter from './search.routes.js';      // Sprint 7
 import reviewRouter from './review.routes.js';      // Sprint 8
 import analyticsRouter from './analytics.routes.js'; // Sprint 9
+import adminRouter from './admin.routes.js';         // Sprint 11
 
 const router = Router();
 
@@ -45,6 +46,9 @@ router.use('/analytics', analyticsRouter);
 // ── Sprint 10: Email Notifications & PDF Tickets ──────────────────
 // No new router — emails run via BullMQ worker (src/jobs/)
 // New route: GET /bookings/:bookingId/ticket (in booking.routes.js)
+
+// ── Sprint 11: Admin Dashboard & Platform Management ───────────────
+router.use('/admin', adminRouter);
 
 export default router;
 
