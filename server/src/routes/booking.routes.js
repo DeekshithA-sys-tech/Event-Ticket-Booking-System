@@ -29,6 +29,7 @@ import * as bookingController from '../controllers/booking.controller.js';
 import { protect } from '../middlewares/auth.middleware.js';
 import { customerOnly } from '../middlewares/role.middleware.js';
 import { validate } from '../middlewares/validate.middleware.js';
+import { seatLockRateLimiter } from '../middlewares/rateLimiter.middleware.js';
 import {
   lockSeatsSchema,
   confirmBookingSchema,
@@ -45,6 +46,7 @@ router.use(protect);
 
 router.post(
   '/lock-seats',
+  seatLockRateLimiter, // Prevents scalper bots from hoarding seats
   customerOnly, // Organizers don't book tickets — they manage events
   validate(lockSeatsSchema),
   bookingController.lockSeats

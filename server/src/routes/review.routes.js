@@ -39,6 +39,7 @@ import * as reviewController from '../controllers/review.controller.js';
 import { protect, optionalProtect } from '../middlewares/auth.middleware.js';
 import { adminOnly } from '../middlewares/role.middleware.js';
 import { validate } from '../middlewares/validate.middleware.js';
+import { reviewRateLimiter } from '../middlewares/rateLimiter.middleware.js';
 import {
   createReviewSchema,
   updateReviewSchema,
@@ -53,7 +54,7 @@ const router = Router();
 router.get('/flagged', protect, adminOnly, reviewController.getFlaggedReviews);
 
 // ── Create Review (any authenticated user) ────────────────────────────────────
-router.post('/', protect, validate(createReviewSchema), reviewController.createReview);
+router.post('/', protect, reviewRateLimiter, validate(createReviewSchema), reviewController.createReview);
 
 // ── Mutate a specific review ─────────────────────────────────────────────────
 router.patch('/:reviewId', protect, validate(updateReviewSchema), reviewController.updateReview);

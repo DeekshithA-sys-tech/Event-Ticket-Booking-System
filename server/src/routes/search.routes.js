@@ -23,8 +23,12 @@
 
 import { Router } from 'express';
 import * as searchController from '../controllers/search.controller.js';
+import { searchRateLimiter } from '../middlewares/rateLimiter.middleware.js';
 
 const router = Router();
+
+// Apply search rate limiter to prevent text search regex scraping & DoS
+router.use(searchRateLimiter);
 
 // ── Static Routes ─────────────────────────────────────────────────────────────
 router.get('/events', searchController.searchEvents);
