@@ -91,8 +91,12 @@ app.use(
   })
 );
 
-// -- 12. Swagger UI --
+// -- 12. Swagger UI & OpenAPI Specification --
 if (!env.isProd) {
+  app.get('/api-docs/json', (_req, res) => {
+    res.setHeader('Content-Type', 'application/json');
+    res.send(swaggerSpec);
+  });
   app.use(
     '/api-docs',
     swaggerUi.serve,
