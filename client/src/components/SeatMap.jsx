@@ -100,47 +100,52 @@ export const SeatMap = ({
   const totalPrice = selectedSeats.reduce((sum, s) => sum + (s.price || event?.ticketPrice || 1500), 0);
 
   return (
-    <div className="space-y-8 bg-white p-6 sm:p-8 rounded-3xl border border-slate-200 shadow-md">
+    <div className="space-y-6 sm:space-y-8 bg-white p-4 sm:p-8 rounded-2xl sm:rounded-3xl border border-slate-200 shadow-md">
       {/* Stage Header */}
       <div className="text-center space-y-2">
-        <div className="w-3/4 max-w-lg mx-auto h-3 bg-gradient-to-r from-indigo-500/20 via-indigo-600 to-indigo-500/20 rounded-full shadow-sm" />
-        <p className="text-[11px] font-bold uppercase tracking-widest text-indigo-600">
+        <div className="w-3/4 max-w-lg mx-auto h-2.5 sm:h-3 bg-gradient-to-r from-indigo-500/20 via-indigo-600 to-indigo-500/20 rounded-full shadow-sm" />
+        <p className="text-[10px] sm:text-[11px] font-bold uppercase tracking-widest text-indigo-600">
           Stage / Screen This Way 🎭
         </p>
       </div>
 
       {/* Seat Map Legend */}
-      <div className="flex flex-wrap items-center justify-center gap-6 py-3 px-4 rounded-2xl bg-slate-50 border border-slate-200 text-xs text-slate-700">
-        <div className="flex items-center gap-2">
-          <div className="w-5 h-5 rounded-lg bg-slate-100 border border-slate-300" />
-          <span>Available</span>
+      <div className="flex flex-wrap items-center justify-center gap-3 sm:gap-6 py-2.5 sm:py-3 px-3 sm:px-4 rounded-xl sm:rounded-2xl bg-slate-50 border border-slate-200 text-xs text-slate-700">
+        <div className="flex items-center gap-1.5 sm:gap-2">
+          <div className="w-4 h-4 sm:w-5 sm:h-5 rounded-md sm:rounded-lg bg-slate-100 border border-slate-300" />
+          <span className="text-[11px] sm:text-xs">Available</span>
         </div>
-        <div className="flex items-center gap-2">
-          <div className="w-5 h-5 rounded-lg bg-indigo-600 border border-indigo-600 shadow-sm" />
-          <span>Selected</span>
+        <div className="flex items-center gap-1.5 sm:gap-2">
+          <div className="w-4 h-4 sm:w-5 sm:h-5 rounded-md sm:rounded-lg bg-indigo-600 border border-indigo-600 shadow-sm" />
+          <span className="text-[11px] sm:text-xs">Selected</span>
         </div>
-        <div className="flex items-center gap-2">
-          <div className="w-5 h-5 rounded-lg bg-amber-100 border border-amber-300 seat-locked-anim" />
-          <span>Locked (10m)</span>
+        <div className="flex items-center gap-1.5 sm:gap-2">
+          <div className="w-4 h-4 sm:w-5 sm:h-5 rounded-md sm:rounded-lg bg-amber-100 border border-amber-300 seat-locked-anim" />
+          <span className="text-[11px] sm:text-xs">Locked (10m)</span>
         </div>
-        <div className="flex items-center gap-2">
-          <div className="w-5 h-5 rounded-lg bg-slate-200 border border-slate-300 opacity-60 cursor-not-allowed" />
-          <span>Booked</span>
+        <div className="flex items-center gap-1.5 sm:gap-2">
+          <div className="w-4 h-4 sm:w-5 sm:h-5 rounded-md sm:rounded-lg bg-slate-200 border border-slate-300 opacity-60 cursor-not-allowed" />
+          <span className="text-[11px] sm:text-xs">Booked</span>
         </div>
       </div>
 
+      {/* Mobile Swipe Hint */}
+      <div className="sm:hidden flex items-center justify-center gap-1.5 text-[11px] text-indigo-600 bg-indigo-50/70 border border-indigo-100 py-1.5 px-3 rounded-xl font-medium">
+        <span>⇄ Swipe horizontally to view all seats</span>
+      </div>
+
       {/* Seat Grid */}
-      <div className="overflow-x-auto py-4">
-        <div className="min-w-[600px] flex flex-col items-center gap-3">
+      <div className="overflow-x-auto py-2 sm:py-4 -mx-2 sm:mx-0 px-2 sm:px-0">
+        <div className="min-w-[540px] sm:min-w-[600px] flex flex-col items-center gap-2 sm:gap-3">
           {formattedRows.map((rowObj) => (
-            <div key={rowObj.rowLabel} className="flex items-center gap-3">
+            <div key={rowObj.rowLabel} className="flex items-center gap-2 sm:gap-3">
               {/* Row Label */}
-              <span className="w-6 text-center font-mono font-bold text-xs text-slate-400">
+              <span className="w-5 sm:w-6 text-center font-mono font-bold text-[10px] sm:text-xs text-slate-400">
                 {rowObj.rowLabel}
               </span>
 
               {/* Row Seats */}
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1.5 sm:gap-2">
                 {rowObj.seats.map((seat, sIdx) => {
                   const sId = seat.seatId || `${rowObj.rowLabel}-${seat.seatNumber || sIdx + 1}`;
                   const selected = isSeatSelected(sId);
@@ -164,7 +169,7 @@ export const SeatMap = ({
                       key={sId}
                       disabled={booked || (locked && !selected)}
                       onClick={() => onToggleSeat({ ...seat, seatId: sId })}
-                      className={`w-9 h-9 sm:w-10 sm:h-10 rounded-xl border text-xs font-mono font-bold flex flex-col items-center justify-center transition-all ${btnStyle}`}
+                      className={`w-8 h-8 sm:w-10 sm:h-10 rounded-lg sm:rounded-xl border text-[11px] sm:text-xs font-mono font-bold flex flex-col items-center justify-center transition-all ${btnStyle}`}
                       title={`Row ${rowObj.rowLabel} Seat ${seat.seatNumber || sIdx + 1} — ₹${seat.price || 1500}`}
                     >
                       <span>{seat.seatNumber || sIdx + 1}</span>
@@ -173,7 +178,7 @@ export const SeatMap = ({
                 })}
               </div>
 
-              <span className="w-6 text-center font-mono font-bold text-xs text-slate-400">
+              <span className="w-5 sm:w-6 text-center font-mono font-bold text-[10px] sm:text-xs text-slate-400">
                 {rowObj.rowLabel}
               </span>
             </div>
@@ -183,19 +188,19 @@ export const SeatMap = ({
 
       {/* Lock Expiry Countdown Banner */}
       {lockExpiresAt && (
-        <div className="flex items-center justify-between p-4 rounded-2xl bg-amber-50 border border-amber-200 text-amber-800">
-          <div className="flex items-center gap-2.5 text-xs font-semibold">
-            <FiClock className="w-4 h-4 text-amber-600 animate-pulse" />
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between p-3.5 sm:p-4 rounded-xl sm:rounded-2xl bg-amber-50 border border-amber-200 text-amber-800 gap-2 sm:gap-4">
+          <div className="flex items-center gap-2 text-xs font-semibold">
+            <FiClock className="w-4 h-4 text-amber-600 shrink-0 animate-pulse" />
             <span>Seats Reserved Temporarily. Complete checkout before timer expires!</span>
           </div>
-          <div className="font-mono font-bold text-base bg-amber-100 px-3 py-1 rounded-xl border border-amber-300">
+          <div className="font-mono font-bold text-sm sm:text-base bg-amber-100 px-3 py-1 rounded-xl border border-amber-300 self-end sm:self-auto">
             {formatTime(timeLeft)}
           </div>
         </div>
       )}
 
       {/* Selection Summary Footer */}
-      <div className="pt-4 border-t border-slate-100 flex flex-col sm:flex-row items-center justify-between gap-4">
+      <div className="pt-4 border-t border-slate-100 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-4">
         <div>
           <p className="text-xs text-slate-500">Selected Seats ({selectedSeats.length}/6 max)</p>
           <div className="flex flex-wrap items-center gap-1.5 mt-1">
@@ -203,7 +208,7 @@ export const SeatMap = ({
               selectedSeats.map((s) => (
                 <span
                   key={s.seatId}
-                  className="px-2.5 py-0.5 rounded-lg text-xs font-mono font-bold bg-indigo-50 text-indigo-700 border border-indigo-200"
+                  className="px-2 py-0.5 rounded-lg text-xs font-mono font-bold bg-indigo-50 text-indigo-700 border border-indigo-200"
                 >
                   {s.row || 'Row'}-{s.seatNumber || s.seatId}
                 </span>
@@ -214,16 +219,16 @@ export const SeatMap = ({
           </div>
         </div>
 
-        <div className="flex items-center gap-6 w-full sm:w-auto justify-between sm:justify-end">
-          <div className="text-right">
-            <p className="text-xs text-slate-500">Total Price</p>
-            <p className="text-xl font-bold text-slate-900">₹{totalPrice.toLocaleString('en-IN')}</p>
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 sm:gap-6 w-full sm:w-auto">
+          <div className="flex items-center justify-between sm:justify-end sm:text-right gap-2">
+            <span className="text-xs text-slate-500 sm:hidden">Total:</span>
+            <p className="text-lg sm:text-xl font-bold text-slate-900">₹{totalPrice.toLocaleString('en-IN')}</p>
           </div>
 
           <button
             disabled={selectedSeats.length === 0 || loading}
             onClick={onConfirmLock}
-            className="px-6 py-3 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-bold shadow-md shadow-indigo-600/20 transition-all hover:scale-[1.02]"
+            className="w-full sm:w-auto px-6 py-3 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-bold shadow-md shadow-indigo-600/20 transition-all hover:scale-[1.01] text-center"
           >
             {loading ? 'Locking Seats...' : 'Confirm & Reserve Seats'}
           </button>
