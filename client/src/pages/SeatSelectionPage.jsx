@@ -49,6 +49,14 @@ export const SeatSelectionPage = () => {
     fetchEventAndSeats();
   }, [id, dispatch]);
 
+  useEffect(() => {
+    if (activeEvent && activeEvent._id !== id) {
+      dispatch(clearSeatSelection());
+    } else if (lockExpiresAt && Date.now() > lockExpiresAt) {
+      dispatch(clearSeatSelection());
+    }
+  }, [id, activeEvent, lockExpiresAt, dispatch]);
+
   const handleToggleSeat = (seat) => {
     dispatch(toggleSeatSelection(seat));
   };
