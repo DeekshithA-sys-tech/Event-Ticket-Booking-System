@@ -1,68 +1,25 @@
 /**
  * @file email.queue.js
- * @description BullMQ email job queue definition.
- *
- * WHAT IS BULLMQ?
- * ───────────────
- * BullMQ is a Redis-backed job queue for Node.js.
- * It allows us to defer work (sending emails) to a background worker process.
- *
- * WHY A JOB QUEUE FOR EMAILS?
- * ────────────────────────────
- *
- * PROBLEM WITH FIRE-AND-FORGET (Sprint 5 approach):
- *   sendEmail(...).catch(err => logger.warn(...))  // ← LOST on failure
- *
- * If the SMTP server is down at booking time:
- *   - User never gets their confirmation email
- *   - No retry — the email is permanently lost
- *   - We don't even know which bookings are missing emails
- *
- * SOLUTION — JOB QUEUE:
- *   1. Booking confirmed → enqueue email job to Redis
- *   2. Worker picks up job → sends email
- *   3. If SMTP fails → job retries with exponential backoff
- *   4. After 3 retries → job moves to "failed" queue for inspection
- *   5. We can inspect failed jobs in Bull Dashboard or via API
- *
- * RESULT:
- *   - Email delivery is RELIABLE (not best-effort)
- *   - API response time is FASTER (no SMTP round-trip in request path)
- *   - Failed emails are VISIBLE and RETRYABLE
- *
- * JOB TYPES:
- * ──────────
- * All email jobs share the same queue but have a `type` field
- * that tells the worker which template to use:
- *
- *   type: 'booking_confirmation'  → bookingConfirmationEmail()
- *   type: 'booking_cancellation'  → bookingCancellationEmail()
- *   type: 'event_reminder'        → eventReminderEmail()
- *   type: 'welcome'               → welcomeEmail()
- *   type: 'password_reset'        → passwordResetEmail()
- *
- * DELAYED JOBS:
- * ─────────────
- * BullMQ supports scheduling jobs to run at a future time.
- * Event reminders use this: when booking is confirmed, we schedule
- * a reminder job to run 24 hours before event.date.
- *
- *   addEmailJob('event_reminder', payload, {
- *     delay: msUntil24HoursBeforeEvent
- *   })
+ * @description BullMQ email job queue definition with seamless direct-send fallback when Redis is offline.
  */
 
 import { Queue } from 'bullmq';
 import { env } from '../../config/env.js';
 import { logger } from '../../utils/logger.js';
+import { isRedisConnected } from '../../config/redis.js';
+import { sendEmail } from '../../utils/sendEmail.js';
+import {
+  bookingConfirmationEmail,
+  bookingCancellationEmail,
+  eventReminderEmail,
+  welcomeEmail,
+  passwordResetEmail,
+} from '../../emails/index.js';
 
-// ─── Queue Singleton ──────────────────────────────────────────────────────────
 let emailQueue = null;
 
 /**
  * Returns the email Queue instance (singleton).
- * Lazily initialised on first call.
- *
  * @returns {Queue}
  */
 export const getEmailQueue = () => {
@@ -71,69 +28,125 @@ export const getEmailQueue = () => {
   emailQueue = new Queue('email', {
     connection: {
       url: env.BULLMQ_REDIS_URL || env.REDIS_URL,
+      enableOfflineQueue: false,
+      maxRetriesPerRequest: 1,
     },
     defaultJobOptions: {
-      // Remove completed jobs after 24 hours (keep storage tidy)
       removeOnComplete: { age: 24 * 60 * 60 },
-      // Keep failed jobs for 7 days (so we can inspect and replay them)
       removeOnFail: { age: 7 * 24 * 60 * 60 },
-      // Default retry strategy: 3 attempts with exponential backoff
       attempts: 3,
       backoff: {
         type: 'exponential',
-        delay: 2000, // Start at 2s, then 4s, then 8s
+        delay: 2000,
       },
     },
   });
 
-  emailQueue.on('error', (err) => {
-    logger.error(`[EmailQueue] Queue error: ${err.message}`);
+  emailQueue.on('error', (_err) => {
+    // Quiet queue error log
   });
 
   logger.info('[EmailQueue] Email queue initialised.');
   return emailQueue;
 };
 
-// ─── Job Adder ────────────────────────────────────────────────────────────────
+/**
+ * Direct email sender fallback when Redis is offline.
+ * Ensures registration / booking / password reset NEVER hang.
+ */
+const sendDirectEmailFallback = async (type, payload) => {
+  let emailContent;
+  const attachments = [];
+
+  switch (type) {
+    case 'booking_confirmation': {
+      emailContent = bookingConfirmationEmail(payload.name, payload.event, payload.booking, payload.qrCode);
+      try {
+        const { generatePdfTicketBuffer } = await import('../../utils/generatePdfTicket.js');
+        const pdfBuffer = await generatePdfTicketBuffer({
+          event: payload.event,
+          booking: payload.booking,
+          user: { name: payload.name },
+          qrCode: payload.qrCode,
+        });
+        attachments.push({
+          filename: `ticket-${payload.booking?.bookingId || 'pass'}.pdf`,
+          content: pdfBuffer,
+          contentType: 'application/pdf',
+        });
+      } catch (err) {
+        logger.warn(`[EmailQueue] Failed to generate PDF attachment in direct fallback: ${err.message}`);
+      }
+      break;
+    }
+    case 'booking_cancellation':
+      emailContent = bookingCancellationEmail(payload.name, payload.event, payload.booking);
+      break;
+    case 'event_reminder':
+      emailContent = eventReminderEmail(payload.name, payload.event, payload.booking);
+      break;
+    case 'welcome':
+      emailContent = welcomeEmail(payload.name);
+      break;
+    case 'password_reset':
+    case 'passwordReset':
+      emailContent = passwordResetEmail(payload.name, payload.resetUrl);
+      break;
+    default:
+      return;
+  }
+
+  if (payload.to && emailContent) {
+    await sendEmail({
+      to: payload.to,
+      subject: emailContent.subject,
+      html: emailContent.html,
+      text: emailContent.text,
+      attachments,
+    });
+  }
+};
 
 /**
- * Adds an email job to the queue.
+ * Adds an email job to the queue, or falls back to direct background email if Redis is offline.
  *
- * @param {string} type - Job type (see types above)
- * @param {object} payload - Email-specific data (user, event, booking, etc.)
- * @param {object} [options] - BullMQ job options (e.g. delay for reminders)
- * @param {number} [options.delay] - Delay in ms before job is processed
- * @returns {Promise<import('bullmq').Job>}
- *
- * @example
- * // Immediate email
- * await addEmailJob('booking_confirmation', { userId, eventId, bookingId });
- *
- * @example
- * // Delayed reminder (24h before event)
- * const delay = new Date(event.date).getTime() - Date.now() - 24 * 60 * 60 * 1000;
- * await addEmailJob('event_reminder', { userId, bookingId }, { delay });
+ * @param {string} type
+ * @param {object} payload
+ * @param {object} [options]
  */
 export const addEmailJob = async (type, payload, options = {}) => {
-  const queue = getEmailQueue();
+  if (!isRedisConnected()) {
+    // Non-blocking direct email delivery in background
+    sendDirectEmailFallback(type, payload).catch((err) =>
+      logger.warn(`[EmailQueue] Direct email fallback error: ${err.message}`)
+    );
+    return null;
+  }
 
-  const job = await queue.add(
-    type, // Job name (used for filtering in Bull Dashboard)
-    { type, ...payload },
-    options
-  );
-
-  logger.info(`[EmailQueue] Job enqueued — type: ${type} | jobId: ${job.id}`);
-  return job;
+  try {
+    const queue = getEmailQueue();
+    const job = await queue.add(type, { type, ...payload }, options);
+    logger.info(`[EmailQueue] Job enqueued — type: ${type} | jobId: ${job.id}`);
+    return job;
+  } catch (err) {
+    logger.warn(`[EmailQueue] Enqueue error (${err.message}) — sending via direct fallback`);
+    sendDirectEmailFallback(type, payload).catch((e) =>
+      logger.warn(`[EmailQueue] Direct email fallback error: ${e.message}`)
+    );
+    return null;
+  }
 };
 
 /**
  * Close the queue connection gracefully.
- * Called during server shutdown.
  */
 export const closeEmailQueue = async () => {
   if (emailQueue) {
-    await emailQueue.close();
+    try {
+      await emailQueue.close();
+    } catch (_err) {
+      // Ignore
+    }
     emailQueue = null;
     logger.info('[EmailQueue] Queue connection closed.');
   }

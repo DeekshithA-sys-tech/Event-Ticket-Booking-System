@@ -63,11 +63,25 @@ import { logger } from './logger.js';
 export const generatePdfTicket = ({ event, booking, user, qrCode, stream }) => {
   return new Promise((resolve, reject) => {
     try {
+      const eventTitle = event?.title || 'Live Event Entry Ticket';
+      const eventDate = event?.date
+        ? new Date(event.date).toLocaleDateString('en-IN', {
+            weekday: 'long',
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric',
+          })
+        : 'Confirmed Booking';
+      const eventTime = event?.time || 'Event Time';
+      const eventVenue = event?.venue || 'Reserved Venue';
+      const eventCity = event?.city || '';
+      const userName = user?.name || 'Ticket Holder';
+
       const doc = new PDFDocument({
         size: 'A4',
         margins: { top: 50, bottom: 50, left: 60, right: 60 },
         info: {
-          Title: `Ticket — ${event.title}`,
+          Title: `Ticket — ${eventTitle}`,
           Author: 'Event Ticket Booking',
           Subject: `Booking ${booking.bookingId}`,
         },
@@ -100,23 +114,16 @@ export const generatePdfTicket = ({ event, booking, user, qrCode, stream }) => {
         .fillColor('#1e1b4b')
         .fontSize(26)
         .font('Helvetica-Bold')
-        .text(event.title, 60, contentTop, { align: 'center', width: doc.page.width - 120 });
+        .text(eventTitle, 60, contentTop, { align: 'center', width: doc.page.width - 120 });
 
       doc.moveDown(0.5);
 
       // ── Date, Time, Venue ──────────────────────────────────────────────────
-      const eventDate = new Date(event.date).toLocaleDateString('en-IN', {
-        weekday: 'long',
-        year: 'numeric',
-        month: 'long',
-        day: 'numeric',
-      });
-
       const infoTop = doc.y + 10;
       doc.fillColor('#4b5563').fontSize(13).font('Helvetica');
 
-      doc.text(`📅  ${eventDate} at ${event.time}`, 60, infoTop, { align: 'center' });
-      doc.text(`📍  ${event.venue}, ${event.city}`, 60, infoTop + 24, { align: 'center' });
+      doc.text(`📅  ${eventDate} at ${eventTime}`, 60, infoTop, { align: 'center' });
+      doc.text(`📍  ${eventVenue}, ${eventCity}`, 60, infoTop + 24, { align: 'center' });
 
       // ── Divider ───────────────────────────────────────────────────────────
       const dividerY = doc.y + 30;
@@ -135,7 +142,6 @@ export const generatePdfTicket = ({ event, booking, user, qrCode, stream }) => {
 
       const drawRow = (label, value, rowIndex) => {
         const y = tableTop + rowIndex * rowHeight;
-        // Row background (alternating)
         if (rowIndex % 2 === 0) {
           doc.rect(col1 - 10, y - 6, doc.page.width - 100, rowHeight).fill('#f9fafb');
         }
@@ -144,15 +150,15 @@ export const generatePdfTicket = ({ event, booking, user, qrCode, stream }) => {
       };
 
       drawRow('Booking ID', booking.bookingId, 0);
-      drawRow('Passenger', user.name, 1);
+      drawRow('Passenger', userName, 1);
 
       // Seats — one per sub-row
-      booking.seats.forEach((seat, i) => {
+      (booking.seats || []).forEach((seat, i) => {
         drawRow(i === 0 ? 'Seats' : '', `Row ${seat.row}  ·  Seat ${seat.seatNumber}`, 2 + i);
       });
 
-      const afterSeatsRow = 2 + booking.seats.length;
-      drawRow('Total Paid', `₹${booking.totalAmount.toLocaleString('en-IN')}`, afterSeatsRow);
+      const afterSeatsRow = 2 + (booking.seats?.length || 0);
+      drawRow('Total Paid', `₹${(booking.totalAmount || 0).toLocaleString('en-IN')}`, afterSeatsRow);
 
       // ── QR Code ───────────────────────────────────────────────────────────
       const qrTop = tableTop + (afterSeatsRow + 1) * rowHeight + 30;
@@ -210,6 +216,30 @@ export const generatePdfTicket = ({ event, booking, user, qrCode, stream }) => {
       logger.info(`[PDF] Ticket generated for booking ${booking.bookingId}`);
     } catch (err) {
       logger.error(`[PDF] Generation failed: ${err.message}`);
+      reject(err);
+    }
+  });
+};
+
+/**
+ * Generates the official PDF ticket in-memory as a Buffer.
+ * Useful for background email attachment delivery and caching.
+ *
+ * @param {object} options
+ * @returns {Promise<Buffer>}
+ */
+export const generatePdfTicketBuffer = (options) => {
+  return new Promise(async (resolve, reject) => {
+    try {
+      const { PassThrough } = await import('stream');
+      const passThrough = new PassThrough();
+      const chunks = [];
+      passThrough.on('data', (c) => chunks.push(c));
+      passThrough.on('end', () => resolve(Buffer.concat(chunks)));
+      passThrough.on('error', reject);
+
+      await generatePdfTicket({ ...options, stream: passThrough });
+    } catch (err) {
       reject(err);
     }
   });
