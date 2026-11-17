@@ -1,35 +1,51 @@
 import { useState, useEffect } from 'react';
 import { FiBell, FiCheck, FiInfo } from 'react-icons/fi';
 import { Link } from 'react-router-dom';
-import axios from 'axios';
+import { useSelector } from 'react-redux';
+import { api } from '../services/api.js';
 
 export const NotificationBell = () => {
+  const { isAuthenticated } = useSelector((state) => state.auth || {});
   const [notifications, setNotifications] = useState([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [isOpen, setIsOpen] = useState(false);
 
   const fetchNotifications = async () => {
+    const token = localStorage.getItem('accessToken');
+    if (!isAuthenticated || !token) {
+      setNotifications([]);
+      setUnreadCount(0);
+      return;
+    }
+
     try {
-      const res = await axios.get('/api/v1/notifications?limit=5');
-      if (res.data?.data) {
-        setNotifications(res.data.data.notifications || []);
-        setUnreadCount(res.data.data.unreadCount || 0);
+      const res = await api.get('/notifications?limit=5');
+      const payload = res?.data || res;
+      if (payload) {
+        setNotifications(payload.notifications || []);
+        setUnreadCount(payload.unreadCount || 0);
       }
     } catch (_err) {
-      // Ignore background fetch error
+      // Catch silently to avoid noisy console unhandled 401s
     }
   };
 
   useEffect(() => {
+    if (!isAuthenticated) {
+      setNotifications([]);
+      setUnreadCount(0);
+      return;
+    }
+
     fetchNotifications();
     const interval = setInterval(fetchNotifications, 60000); // 1-min polling
     return () => clearInterval(interval);
-  }, []);
+  }, [isAuthenticated]);
 
   const handleMarkAsRead = async (id, e) => {
     e.stopPropagation();
     try {
-      await axios.patch(`/api/v1/notifications/${id}/read`);
+      await api.patch(`/notifications/${id}/read`);
       setNotifications((prev) =>
         prev.map((n) => (n._id === id ? { ...n, isRead: true } : n))
       );
@@ -41,7 +57,7 @@ export const NotificationBell = () => {
 
   const handleMarkAllRead = async () => {
     try {
-      await axios.patch('/api/v1/notifications/read-all');
+      await api.patch('/notifications/read-all');
       setNotifications((prev) => prev.map((n) => ({ ...n, isRead: true })));
       setUnreadCount(0);
     } catch (_err) {
