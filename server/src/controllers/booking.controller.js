@@ -151,6 +151,24 @@ export const cancelBookingCore = async (bookingId, userId, userRole, reason) => 
     await session.endSession();
   }
 
+  // Release any lingering Redis seat locks
+  try {
+    const bookingUserId = booking.user?._id || booking.user || '';
+    await releaseSeats(eventId, seatIds, bookingUserId.toString());
+  } catch (err) {
+    logger.warn(`[SeatLock] Failed to release seat locks during cancellation: ${err.message}`);
+  }
+
+  // Invalidate Redis seat cache and search cache
+  try {
+    const { cacheDel, cacheFlushPattern } = await import('../utils/cache.js');
+    await cacheDel(`search:seats:${eventId}`);
+    await cacheFlushPattern(`search:seats:${eventId}*`);
+    await cacheFlushPattern(`search:events:*`);
+  } catch (err) {
+    logger.warn(`[Cache] Failed to invalidate cache on cancel: ${err.message}`);
+  }
+
   // Record refund in Payment ledger
   try {
     const Payment = (await import('../models/payment.model.js')).default;
@@ -264,6 +282,15 @@ export const lockSeats = asyncHandler(async (req, res) => {
   const Event = (await import('../models/event.model.js')).default;
   await Event.bulkWrite(seatUpdateOps);
 
+  // Invalidate Redis seat cache
+  try {
+    const { cacheDel, cacheFlushPattern } = await import('../utils/cache.js');
+    await cacheDel(`search:seats:${eventId}`);
+    await cacheFlushPattern(`search:seats:${eventId}*`);
+  } catch (err) {
+    logger.warn(`[Cache] Failed to invalidate cache on lock: ${err.message}`);
+  }
+
   const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
   logger.info(`[Booking] ${seatIds.length} seat(s) locked for user ${userId} on event ${eventId}`);
 
@@ -354,6 +381,16 @@ export const confirmBooking = asyncHandler(async (req, res) => {
   }
 
   await releaseSeats(eventId, seatIds, userId.toString());
+
+  // Invalidate Redis seat cache and search cache
+  try {
+    const { cacheDel, cacheFlushPattern } = await import('../utils/cache.js');
+    await cacheDel(`search:seats:${eventId}`);
+    await cacheFlushPattern(`search:seats:${eventId}*`);
+    await cacheFlushPattern(`search:events:*`);
+  } catch (err) {
+    logger.warn(`[Cache] Failed to invalidate cache on confirm: ${err.message}`);
+  }
 
   // Record initial transaction in Payment ledger
   try {
