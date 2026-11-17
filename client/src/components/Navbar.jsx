@@ -98,7 +98,7 @@ export const Navbar = () => {
           </div>
 
           {/* Active Search Bar & City Selector (Desktop) */}
-          <div className="hidden md:flex items-center gap-3 flex-1 max-w-lg mx-6">
+          <div className="hidden md:flex items-center gap-2 lg:gap-3 flex-1 max-w-xs lg:max-w-md mx-2 md:mx-4 lg:mx-6">
             <form
               onSubmit={handleSearchSubmit}
               className="relative flex-1 flex items-center group"
@@ -141,7 +141,7 @@ export const Navbar = () => {
           </div>
 
           {/* Right Navigation */}
-          <div className="hidden md:flex items-center gap-4">
+          <div className="hidden md:flex items-center gap-2.5 lg:gap-4 shrink-0">
             <Link
               to="/events"
               className={`text-sm font-medium transition-colors ${
