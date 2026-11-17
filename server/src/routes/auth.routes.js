@@ -82,6 +82,19 @@ router.post('/reset-password',
   authController.resetPassword
 );
 
+router.get('/verify-email',
+  authController.verifyEmail
+);
+
+router.post('/verify-email',
+  authController.verifyEmail
+);
+
+router.post('/resend-verification',
+  authRateLimiter,
+  authController.resendVerification
+);
+
 // ── Protected Routes ──────────────────────────────────────────────────────────
 // `protect` middleware verifies JWT and attaches req.user
 

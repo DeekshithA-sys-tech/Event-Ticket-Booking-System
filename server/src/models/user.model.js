@@ -47,6 +47,7 @@
 
 import mongoose from 'mongoose';
 import bcrypt from 'bcryptjs';
+import crypto from 'crypto';
 import { ALL_ROLES, ROLES } from '../constants/roles.js';
 
 const userSchema = new mongoose.Schema(
@@ -201,6 +202,18 @@ userSchema.methods.changedPasswordAfter = function (jwtIssuedAt) {
     return jwtIssuedAt < changedAtSeconds;
   }
   return false; // Password was never changed
+};
+
+/**
+ * Generates a random 32-byte email verification token, hashes it for storage,
+ * and sets expiration to 24 hours.
+ * @returns {string} Raw unhashed token to email to the user
+ */
+userSchema.methods.createEmailVerificationToken = function () {
+  const rawToken = crypto.randomBytes(32).toString('hex');
+  this.emailVerificationToken = crypto.createHash('sha256').update(rawToken).digest('hex');
+  this.emailVerificationExpires = new Date(Date.now() + 24 * 60 * 60 * 1000);
+  return rawToken;
 };
 
 const User = mongoose.model('User', userSchema);
