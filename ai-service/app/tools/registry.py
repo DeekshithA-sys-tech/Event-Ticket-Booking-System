@@ -127,8 +127,11 @@ class ToolRegistry:
         if tool_name == "create_booking":
             event_id = args.get("event_id", "N/A")
             seat_ids = args.get("seat_ids", [])
-            seats_str = ", ".join(seat_ids) if isinstance(seat_ids, list) else str(seat_ids)
-            return f"Please confirm reservation of {len(seat_ids)} seat(s) ({seats_str}) for Event `{event_id}`."
+            if isinstance(seat_ids, list):
+                seats_str = ", ".join([s.get("seatId", str(s)) if isinstance(s, dict) else str(s) for s in seat_ids])
+            else:
+                seats_str = str(seat_ids)
+            return f"Please confirm reservation of {len(seat_ids) if isinstance(seat_ids, list) else 1} seat(s) ({seats_str}) for Event `{event_id}`."
         elif tool_name == "cancel_booking":
             booking_id = args.get("booking_id", "N/A")
             return f"Please confirm cancellation of Booking `{booking_id}`. This action is irreversible and will trigger a refund."
