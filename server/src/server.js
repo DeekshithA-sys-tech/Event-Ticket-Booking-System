@@ -1,41 +1,6 @@
 /**
  * @file server.js
  * @description HTTP server entry point with graceful shutdown.
- *
- * RESPONSIBILITIES:
- * -----------------
- * This file does ONLY three things:
- *  1. Boot sequence: connect DB → connect Redis → start HTTP server
- *  2. Listen for OS signals to initiate graceful shutdown
- *  3. Handle any uncaught exceptions / unhandled rejections as last resort
- *
- * It imports `app` from app.js — it doesn't touch middleware or routes.
- *
- * WHY GRACEFUL SHUTDOWN?
- * -----------------------
- * When a container is being terminated (Ctrl+C, SIGTERM from Kubernetes/Render):
- *
- * WITHOUT graceful shutdown:
- *  - Process dies immediately
- *  - In-flight requests are aborted → users see 500 errors
- *  - Database connections are cut hard → potential data corruption
- *
- * WITH graceful shutdown:
- *  1. Stop accepting NEW connections
- *  2. Wait for existing requests to complete (max 10 seconds)
- *  3. Close database and Redis connections cleanly
- *  4. Exit 0 (success)
- *
- * This is mandatory in any system with SLAs.
- *
- * STARTUP ORDER:
- * --------------
- * 1. Connect MongoDB (required — fail if unavailable)
- * 2. Connect Redis (optional in early sprints — warn if unavailable)
- * 3. Configure Cloudinary
- * 4. Start HTTP server
- *
- * If step 1 fails, the process exits. If step 2 fails, we warn and continue.
  */
 
 import { createServer } from 'http';
@@ -45,7 +10,7 @@ import { connectRedis } from './config/redis.js';
 import { configureCloudinary } from './config/cloudinary.js';
 import { env } from './config/env.js';
 import { logger } from './utils/logger.js';
-import { startEmailWorker, stopEmailWorker } from './jobs/workers/email.worker.js'; // Sprint 10
+import { startEmailWorker, stopEmailWorker } from './jobs/workers/email.worker.js';
 
 // ─── Bootstrap Function ───────────────────────────────────────────────────────
 const bootstrap = async () => {
@@ -53,17 +18,20 @@ const bootstrap = async () => {
     // ── Step 1: Database (required) ──────────────────────────────────────────
     await connectDB();
 
-    // ── Step 2: Redis (optional in early sprints) ────────────────────────────
-    await connectRedis();
+    // ── Step 2: Redis (optional in local dev mode) ────────────────────────────
+    const redisConnected = await connectRedis();
 
-    // ── Step 3: Cloudinary ──────────────────────────────────────────────────────────────────────
+    // ── Step 3: Cloudinary ────────────────────────────────────────────────────
     configureCloudinary();
 
-    // ── Step 4: Email Worker (BullMQ) ────────────────────────────────────────────────────────────────
-    // Start AFTER Redis connects — BullMQ needs Redis to be available
-    startEmailWorker();
+    // ── Step 4: Email Worker (BullMQ) ────────────────────────────────────────
+    if (redisConnected) {
+      startEmailWorker();
+    } else {
+      logger.info('[EmailWorker] Email worker paused (Redis offline — running in Memory Fallback mode).');
+    }
 
-    // ── Step 5: Start HTTP Server ────────────────────────────────────────────────────────────────
+    // ── Step 5: Start HTTP Server ────────────────────────────────────────────
     const httpServer = createServer(app);
 
     httpServer.listen(env.PORT, () => {
@@ -80,7 +48,6 @@ const bootstrap = async () => {
     const shutdown = async (signal) => {
       logger.warn(`[Server] Received ${signal}. Starting graceful shutdown...`);
 
-      // Stop accepting new connections
       httpServer.close(async () => {
         logger.info('[Server] HTTP server closed. No new connections accepted.');
 
@@ -91,16 +58,18 @@ const bootstrap = async () => {
           logger.info('[DB] MongoDB connection closed.');
 
           // Close Redis connection
-          const { getRedisClient } = await import('./config/redis.js');
-          try {
-            const redis = getRedisClient();
-            await redis.quit();
-            logger.info('[Redis] Redis connection closed.');
-          } catch {
-            // Redis might not have connected — that's fine
+          if (redisConnected) {
+            const { getRedisClient } = await import('./config/redis.js');
+            try {
+              const redis = getRedisClient();
+              await redis.quit();
+              logger.info('[Redis] Redis connection closed.');
+            } catch (_err) {
+              // Ignore
+            }
           }
 
-          // Close email worker (Sprint 10)
+          // Close email worker
           await stopEmailWorker();
           const { closeEmailQueue } = await import('./jobs/queues/email.queue.js');
           await closeEmailQueue();
@@ -114,16 +83,13 @@ const bootstrap = async () => {
         }
       });
 
-      // Force shutdown if graceful shutdown takes too long
       setTimeout(() => {
         logger.error('[Server] Graceful shutdown timed out. Forcing exit.');
         process.exit(1);
-      }, 10000); // 10 second timeout
+      }, 10000);
     };
 
-    // SIGTERM: sent by Docker/Kubernetes/Render when terminating a container
     process.on('SIGTERM', () => shutdown('SIGTERM'));
-    // SIGINT: sent by Ctrl+C in the terminal
     process.on('SIGINT', () => shutdown('SIGINT'));
 
     return httpServer;
@@ -132,10 +98,6 @@ const bootstrap = async () => {
     process.exit(1);
   }
 };
-
-// ─── Last-Resort Error Handlers ───────────────────────────────────────────────
-// These catch anything that slips past our error middleware (programming bugs).
-// Log the error and exit — a crashed process is better than a zombie process.
 
 process.on('uncaughtException', (err) => {
   logger.error(`[FATAL] Uncaught Exception: ${err.message}`, { stack: err.stack });
@@ -147,5 +109,4 @@ process.on('unhandledRejection', (reason) => {
   process.exit(1);
 });
 
-// ─── Start the Server ─────────────────────────────────────────────────────────
 bootstrap();

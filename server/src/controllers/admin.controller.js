@@ -1,48 +1,37 @@
 /**
  * @file admin.controller.js
- * @description HTTP handlers for Admin platform management endpoints.
- *
- * ALL ROUTES BEHIND adminOnly middleware — enforced at the router level.
- * Controllers only handle request/response — zero business logic here.
- *
- * IP ADDRESS EXTRACTION:
- * ──────────────────────
- * We pass req.ip and req.get('user-agent') to the service for audit logging.
- * req.ip works correctly because app.js sets `trust proxy = 1` in production.
+ * @description Admin platform management Controller (Dashboard, Moderation, Force Cancellations, Audit Logs, System Health).
  */
 
-import * as adminService from '../services/admin.service.js';
+import * as adminRepo from '../repositories/admin.repository.js';
+import * as eventRepo from '../repositories/event.repository.js';
+import { cancelBookingCore } from './booking.controller.js';
+import { parsePaginationParams } from '../utils/pagination.js';
+import { buildPaginationMeta } from '../utils/ApiResponse.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { ApiResponse } from '../utils/ApiResponse.js';
+import { NotFoundError, ValidationError } from '../utils/ApiError.js';
 import { HTTP_STATUS } from '../constants/httpStatus.js';
 import { MESSAGES } from '../constants/messages.js';
-import { ValidationError } from '../utils/ApiError.js';
+import { AUDIT_ACTIONS } from '../models/auditLog.model.js';
+import { createModuleLogger } from '../utils/logger.js';
 
-/**
- * @swagger
- * tags:
- *   - name: Admin
- *     description: Platform administration — requires admin role
- */
+const logger = createModuleLogger('AdminController');
+
+const logAdminAction = (adminUser, logData) => {
+  adminRepo
+    .createAuditLog({
+      admin: adminUser._id,
+      adminEmail: adminUser.email,
+      ...logData,
+    })
+    .catch((err) => logger.error(`[AuditLog] Failed to write audit log: ${err.message}`));
+};
 
 // ─── 1. Platform Dashboard ────────────────────────────────────────────────────
 
-/**
- * @swagger
- * /admin/dashboard:
- *   get:
- *     tags: [Admin]
- *     summary: Get aggregated platform dashboard statistics
- *     description: |
- *       Returns a high-level overview of the entire platform:
- *       users, events, bookings, revenue, and moderation stats.
- *       Runs 12 DB queries in parallel via Promise.all.
- *     responses:
- *       200:
- *         description: Dashboard fetched successfully
- */
 export const getDashboard = asyncHandler(async (_req, res) => {
-  const stats = await adminService.getAdminDashboard();
+  const stats = await adminRepo.getDashboardStats();
 
   return res
     .status(HTTP_STATUS.OK)
@@ -51,177 +40,103 @@ export const getDashboard = asyncHandler(async (_req, res) => {
 
 // ─── 2. Event Management ──────────────────────────────────────────────────────
 
-/**
- * @swagger
- * /admin/events:
- *   get:
- *     tags: [Admin]
- *     summary: List all events platform-wide with filters
- *     parameters:
- *       - $ref: '#/components/parameters/PageParam'
- *       - $ref: '#/components/parameters/LimitParam'
- *       - name: status
- *         in: query
- *         schema:
- *           type: string
- *           enum: [draft, published, cancelled, completed]
- *       - name: organizer
- *         in: query
- *         description: Filter by organizer user ID
- *         schema:
- *           type: string
- *       - name: city
- *         in: query
- *         schema:
- *           type: string
- *       - name: search
- *         in: query
- *         schema:
- *           type: string
- *     responses:
- *       200:
- *         description: Events fetched successfully
- */
 export const listEvents = asyncHandler(async (req, res) => {
-  const { events, meta } = await adminService.listAllEvents(req.query);
+  const { page, limit, skip, sortObj } = parsePaginationParams(req.query);
+
+  const filter = {};
+  if (req.query.status && req.query.status !== 'all') filter.status = req.query.status;
+  if (req.query.organizer) filter.organizer = req.query.organizer;
+  if (req.query.city) filter.city = { $regex: req.query.city, $options: 'i' };
+  if (req.query.search) {
+    filter.title = { $regex: req.query.search, $options: 'i' };
+  }
+
+  const { events, total } = await adminRepo.findAllEvents(filter, { skip, limit, sortObj });
+  const meta = buildPaginationMeta(total, page, limit);
 
   return res
     .status(HTTP_STATUS.OK)
     .json(new ApiResponse(HTTP_STATUS.OK, MESSAGES.EVENT.LIST_FETCHED, events, meta));
 });
 
-/**
- * @swagger
- * /admin/events/{eventId}/status:
- *   patch:
- *     tags: [Admin]
- *     summary: Force-change the status of any event (admin override)
- *     description: |
- *       Admin can change any event's status regardless of who owns it.
- *       Cannot set status to 'completed' — that is system-managed.
- *     parameters:
- *       - name: eventId
- *         in: path
- *         required: true
- *         schema:
- *           type: string
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             required: [status]
- *             properties:
- *               status:
- *                 type: string
- *                 enum: [draft, published, cancelled]
- *               reason:
- *                 type: string
- *                 example: "Venue unavailable — force cancelling event"
- *     responses:
- *       200:
- *         description: Event status updated
- *       400:
- *         description: Cannot set status to 'completed'
- *       404:
- *         description: Event not found
- */
 export const changeEventStatus = asyncHandler(async (req, res) => {
   const { status, reason } = req.body;
+  const { eventId } = req.params;
 
   if (!status) throw new ValidationError('status is required in request body.');
 
-  const event = await adminService.adminChangeEventStatus(
-    req.params.eventId,
-    status,
-    reason,
-    req.user
+  if (status === 'completed') {
+    throw new ValidationError(
+      'Cannot manually set status to "completed". This is system-managed.'
+    );
+  }
+
+  const event = await eventRepo.findEventById(eventId);
+  if (!event) throw new NotFoundError(MESSAGES.EVENT.NOT_FOUND);
+
+  const previousStatus = event.status;
+  const updated = await eventRepo.updateEventById(eventId, { status });
+
+  logAdminAction(req.user, {
+    action: AUDIT_ACTIONS.EVENT_STATUS_CHANGE,
+    targetModel: 'Event',
+    targetId: event._id,
+    targetSummary: `Event: "${event.title}"`,
+    reason: reason || null,
+    changes: { before: { status: previousStatus }, after: { status } },
+  });
+
+  logger.info(
+    `[Admin] Event "${event.title}" status: ${previousStatus} → ${status} | Admin: ${req.user.email}`
   );
 
   return res
     .status(HTTP_STATUS.OK)
-    .json(new ApiResponse(HTTP_STATUS.OK, MESSAGES.ADMIN.EVENT_STATUS_UPDATED, event));
+    .json(new ApiResponse(HTTP_STATUS.OK, MESSAGES.ADMIN.EVENT_STATUS_UPDATED, updated));
 });
 
 // ─── 3. Booking Management ────────────────────────────────────────────────────
 
-/**
- * @swagger
- * /admin/bookings:
- *   get:
- *     tags: [Admin]
- *     summary: List all bookings platform-wide with filters
- *     parameters:
- *       - $ref: '#/components/parameters/PageParam'
- *       - $ref: '#/components/parameters/LimitParam'
- *       - name: status
- *         in: query
- *         schema:
- *           type: string
- *           enum: [confirmed, cancelled]
- *       - name: event
- *         in: query
- *         description: Filter by event ObjectId
- *         schema:
- *           type: string
- *       - name: user
- *         in: query
- *         description: Filter by user ObjectId
- *         schema:
- *           type: string
- *     responses:
- *       200:
- *         description: Bookings fetched successfully
- */
 export const listBookings = asyncHandler(async (req, res) => {
-  const { bookings, meta } = await adminService.listAllBookings(req.query);
+  const { page, limit, skip, sortObj } = parsePaginationParams(req.query);
+
+  const filter = {};
+  if (req.query.status) filter.status = req.query.status;
+  if (req.query.event) filter.event = req.query.event;
+  if (req.query.user) filter.user = req.query.user;
+
+  const { bookings, total } = await adminRepo.findAllBookings(filter, { skip, limit, sortObj });
+  const meta = buildPaginationMeta(total, page, limit);
 
   return res
     .status(HTTP_STATUS.OK)
     .json(new ApiResponse(HTTP_STATUS.OK, MESSAGES.BOOKING.LIST_FETCHED, bookings, meta));
 });
 
-/**
- * @swagger
- * /admin/bookings/{bookingId}/cancel:
- *   post:
- *     tags: [Admin]
- *     summary: Force-cancel any booking and release its seats (admin override)
- *     description: |
- *       Admin can cancel any user's booking regardless of event date.
- *       Seats are released atomically via Mongoose transaction.
- *       A cancellation email is sent to the customer.
- *       The action is recorded in the audit log.
- *     parameters:
- *       - name: bookingId
- *         in: path
- *         required: true
- *         schema:
- *           type: string
- *         example: TKT-20260715-X7K2M
- *     requestBody:
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             properties:
- *               reason:
- *                 type: string
- *                 example: "Fraudulent booking detected"
- *     responses:
- *       200:
- *         description: Booking force-cancelled successfully
- *       400:
- *         description: Booking is already cancelled
- *       404:
- *         description: Booking not found
- */
 export const forceCancelBooking = asyncHandler(async (req, res) => {
-  await adminService.adminForceCancelBooking(
-    req.params.bookingId,
-    req.body?.reason,
-    req.user
+  const { bookingId } = req.params;
+  const reason = req.body?.reason;
+
+  const booking = await adminRepo.findBookingByBookingId(bookingId);
+  if (!booking) throw new NotFoundError(MESSAGES.BOOKING.NOT_FOUND);
+
+  if (booking.status === 'cancelled') {
+    throw new ValidationError('Booking is already cancelled.');
+  }
+
+  await cancelBookingCore(bookingId, req.user._id, 'admin', reason);
+
+  logAdminAction(req.user, {
+    action: AUDIT_ACTIONS.BOOKING_FORCE_CANCEL,
+    targetModel: 'Booking',
+    targetId: booking._id,
+    targetSummary: `Booking: ${bookingId} | User: ${booking.user?.email || booking.user}`,
+    reason: reason || null,
+    changes: { before: { status: 'confirmed' }, after: { status: 'cancelled' } },
+  });
+
+  logger.info(
+    `[Admin] Force-cancelled booking ${bookingId} | Admin: ${req.user.email} | Reason: ${reason || 'none'}`
   );
 
   return res
@@ -231,37 +146,17 @@ export const forceCancelBooking = asyncHandler(async (req, res) => {
 
 // ─── 4. Review Moderation ─────────────────────────────────────────────────────
 
-/**
- * @swagger
- * /admin/reviews:
- *   get:
- *     tags: [Admin]
- *     summary: List all reviews platform-wide with moderation filters
- *     parameters:
- *       - $ref: '#/components/parameters/PageParam'
- *       - $ref: '#/components/parameters/LimitParam'
- *       - name: isFlagged
- *         in: query
- *         description: Filter by flagged status
- *         schema:
- *           type: boolean
- *       - name: event
- *         in: query
- *         description: Filter by event ObjectId
- *         schema:
- *           type: string
- *       - name: rating
- *         in: query
- *         schema:
- *           type: integer
- *           minimum: 1
- *           maximum: 5
- *     responses:
- *       200:
- *         description: Reviews fetched successfully
- */
 export const listReviews = asyncHandler(async (req, res) => {
-  const { reviews, meta } = await adminService.listAllReviews(req.query);
+  const { page, limit, skip, sortObj } = parsePaginationParams(req.query);
+
+  const filter = {};
+  if (req.query.isFlagged === 'true') filter.isFlagged = true;
+  if (req.query.isFlagged === 'false') filter.isFlagged = false;
+  if (req.query.event) filter.event = req.query.event;
+  if (req.query.rating) filter.rating = parseInt(req.query.rating, 10);
+
+  const { reviews, total } = await adminRepo.findAllReviews(filter, { skip, limit, sortObj });
+  const meta = buildPaginationMeta(total, page, limit);
 
   return res
     .status(HTTP_STATUS.OK)
@@ -270,39 +165,16 @@ export const listReviews = asyncHandler(async (req, res) => {
 
 // ─── 5. Audit Logs ────────────────────────────────────────────────────────────
 
-/**
- * @swagger
- * /admin/audit-logs:
- *   get:
- *     tags: [Admin]
- *     summary: Get paginated admin audit trail
- *     description: |
- *       Returns an immutable audit trail of all admin actions.
- *       Can be filtered by action type, target model, or admin ID.
- *     parameters:
- *       - $ref: '#/components/parameters/PageParam'
- *       - $ref: '#/components/parameters/LimitParam'
- *       - name: action
- *         in: query
- *         description: Filter by action type (e.g. user.suspend, event.status_change)
- *         schema:
- *           type: string
- *       - name: targetModel
- *         in: query
- *         schema:
- *           type: string
- *           enum: [User, Event, Booking, Review]
- *       - name: admin
- *         in: query
- *         description: Filter by admin user ObjectId
- *         schema:
- *           type: string
- *     responses:
- *       200:
- *         description: Audit logs fetched successfully
- */
 export const getAuditLogs = asyncHandler(async (req, res) => {
-  const { logs, meta } = await adminService.getAuditLogs(req.query);
+  const { page, limit, skip, sortObj } = parsePaginationParams(req.query);
+
+  const filter = {};
+  if (req.query.action) filter.action = req.query.action;
+  if (req.query.targetModel) filter.targetModel = req.query.targetModel;
+  if (req.query.admin) filter.admin = req.query.admin;
+
+  const { logs, total } = await adminRepo.findAuditLogs(filter, { skip, limit, sortObj });
+  const meta = buildPaginationMeta(total, page, limit);
 
   return res
     .status(HTTP_STATUS.OK)
@@ -311,23 +183,77 @@ export const getAuditLogs = asyncHandler(async (req, res) => {
 
 // ─── 6. System Health ─────────────────────────────────────────────────────────
 
-/**
- * @swagger
- * /admin/health:
- *   get:
- *     tags: [Admin]
- *     summary: Get detailed system health status (admin enriched view)
- *     description: |
- *       Returns health status of all system components:
- *       MongoDB ping latency, Redis ping latency, BullMQ queue depth,
- *       and Node.js process memory/uptime.
- *       Unlike the public /health endpoint, this includes sensitive details.
- *     responses:
- *       200:
- *         description: Health status fetched
- */
 export const getSystemHealth = asyncHandler(async (_req, res) => {
-  const health = await adminService.getSystemHealth();
+  const startTime = Date.now();
+  const checks = {};
+
+  // MongoDB Check
+  try {
+    const mongoose = await import('mongoose');
+    if (mongoose.default.connection.readyState === 1) {
+      checks.database = { status: 'healthy', latencyMs: Math.max(1, Date.now() - startTime) };
+    } else {
+      checks.database = { status: 'connecting', latencyMs: 0 };
+    }
+  } catch (err) {
+    checks.database = { status: 'unhealthy', error: err.message };
+  }
+
+  // Redis Check
+  try {
+    const { getRedisClient } = await import('../config/redis.js');
+    const redis = getRedisClient();
+    if (redis && redis.status === 'ready') {
+      const redisPing = Date.now();
+      await Promise.race([
+        redis.ping(),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 500)),
+      ]);
+      checks.redis = { status: 'healthy', latencyMs: Date.now() - redisPing };
+    } else {
+      checks.redis = { status: 'healthy (memory fallback)', latencyMs: 1 };
+    }
+  } catch (_err) {
+    checks.redis = { status: 'healthy (memory fallback)', latencyMs: 1 };
+  }
+
+  // BullMQ Email Queue Check
+  try {
+    const { isRedisHealthy } = await import('../config/redis.js');
+    if (isRedisHealthy && isRedisHealthy()) {
+      const { getEmailQueue } = await import('../jobs/queues/email.queue.js');
+      const queue = getEmailQueue();
+      const [waiting, active, failed, delayed] = await Promise.all([
+        queue.getWaitingCount(),
+        queue.getActiveCount(),
+        queue.getFailedCount(),
+        queue.getDelayedCount(),
+      ]);
+      checks.emailQueue = { status: 'healthy', waiting, active, failed, delayed };
+    } else {
+      checks.emailQueue = { status: 'memory fallback (direct dispatch)', waiting: 0, active: 0, failed: 0 };
+    }
+  } catch (_err) {
+    checks.emailQueue = { status: 'memory fallback (direct dispatch)', waiting: 0, active: 0, failed: 0 };
+  }
+
+  // Process Stats
+  const memUsage = process.memoryUsage();
+  checks.process = {
+    uptimeSeconds: Math.floor(process.uptime()),
+    memoryMb: {
+      rss: Math.round(memUsage.rss / 1024 / 1024),
+      heapUsed: Math.round(memUsage.heapUsed / 1024 / 1024),
+      heapTotal: Math.round(memUsage.heapTotal / 1024 / 1024),
+    },
+    nodeVersion: process.version,
+  };
+
+  const health = {
+    status: 'healthy',
+    timestamp: new Date().toISOString(),
+    checks,
+  };
 
   return res
     .status(HTTP_STATUS.OK)

@@ -1,126 +1,90 @@
 /**
  * @file search.controller.js
- * @description HTTP handlers for Search & Discovery endpoints.
- *
- * All search endpoints are PUBLIC (no authentication required).
- * Seat availability is also public — users need to see which seats
- * are free before logging in to book.
+ * @description Search & Discovery Controller with Redis caching.
  */
 
-import * as searchService from '../services/search.service.js';
+import * as searchRepo from '../repositories/search.repository.js';
+import { withCache } from '../utils/cache.js';
+import { parsePaginationParams } from '../utils/pagination.js';
+import { buildPaginationMeta } from '../utils/ApiResponse.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { ApiResponse } from '../utils/ApiResponse.js';
+import { NotFoundError } from '../utils/ApiError.js';
 import { HTTP_STATUS } from '../constants/httpStatus.js';
+import { MESSAGES } from '../constants/messages.js';
 
-/**
- * @swagger
- * tags:
- *   - name: Search
- *     description: Event search, discovery, and seat availability
- */
+// Cache TTLs (seconds)
+const TTL = {
+  EVENTS: 2 * 60,       // 2 minutes — new events may publish
+  TRENDING: 5 * 60,     // 5 minutes — approximate metric
+  CITIES: 60 * 60,      // 60 minutes — rarely changes
+  CATEGORIES: 10 * 60,  // 10 minutes — changes on publish/cancel
+  RELATED: 10 * 60,     // 10 minutes — changes on new event
+  SEATS: 30,            // 30 seconds — near-real-time
+};
 
-// ─── Full-Text Event Search ───────────────────────────────────────────────────
+const buildSearchCacheKey = (params) => {
+  const parts = Object.keys(params)
+    .filter((k) => params[k] !== undefined && params[k] !== '')
+    .sort()
+    .map((k) => `${k}=${params[k]}`);
+  return `search:events:${parts.join('|')}`;
+};
 
-/**
- * @swagger
- * /search/events:
- *   get:
- *     tags: [Search]
- *     summary: Search and filter published events
- *     security: []
- *     description: |
- *       Supports full-text search across title, venue, and description.
- *       Results are cached for 2 minutes per unique query combination.
- *     parameters:
- *       - name: q
- *         in: query
- *         schema:
- *           type: string
- *         description: Full-text search query
- *       - name: city
- *         in: query
- *         schema:
- *           type: string
- *       - name: category
- *         in: query
- *         schema:
- *           type: string
- *         description: Category slug (e.g. 'music', 'sports')
- *       - name: minPrice
- *         in: query
- *         schema:
- *           type: number
- *       - name: maxPrice
- *         in: query
- *         schema:
- *           type: number
- *       - name: startDate
- *         in: query
- *         schema:
- *           type: string
- *           format: date
- *       - name: endDate
- *         in: query
- *         schema:
- *           type: string
- *           format: date
- *       - name: hasAvailableSeats
- *         in: query
- *         schema:
- *           type: boolean
- *       - $ref: '#/components/parameters/PageParam'
- *       - $ref: '#/components/parameters/LimitParam'
- *       - $ref: '#/components/parameters/SortParam'
- *     responses:
- *       200:
- *         description: Events found
- */
+// ─── Controller Handlers ───────────────────────────────────────────────────────
+
 export const searchEvents = asyncHandler(async (req, res) => {
-  // Support both ?q= and ?search= query param names for flexibility
   const queryParams = {
     ...req.query,
     search: req.query.q || req.query.search,
   };
 
-  const { events, meta } = await searchService.searchEvents(queryParams);
+  const { page, limit, skip, sortObj } = parsePaginationParams(queryParams, {
+    defaultSort: 'date',
+  });
+
+  const filters = {
+    search: queryParams.search,
+    city: queryParams.city,
+    categorySlug: queryParams.category,
+    minPrice: queryParams.minPrice,
+    maxPrice: queryParams.maxPrice,
+    startDate: queryParams.startDate,
+    endDate: queryParams.endDate,
+    hasAvailableSeats: queryParams.hasAvailableSeats,
+  };
+
+  const cacheKey = buildSearchCacheKey({
+    ...filters,
+    page,
+    limit,
+    sort: queryParams.sort || 'date',
+  });
+
+  const result = await withCache(
+    cacheKey,
+    () => searchRepo.searchEvents(filters, { skip, limit, sortObj }),
+    TTL.EVENTS
+  );
+
+  const meta = buildPaginationMeta(result.total, page, limit);
 
   return res
     .status(HTTP_STATUS.OK)
-    .json(new ApiResponse(HTTP_STATUS.OK, 'Search results fetched successfully.', events, meta));
+    .json(new ApiResponse(HTTP_STATUS.OK, 'Search results fetched successfully.', result.events, meta));
 });
 
-// ─── Trending Events ──────────────────────────────────────────────────────────
-
-/**
- * @swagger
- * /search/trending:
- *   get:
- *     tags: [Search]
- *     summary: Get trending events (most booked in last N days)
- *     security: []
- *     parameters:
- *       - name: days
- *         in: query
- *         schema:
- *           type: integer
- *           default: 7
- *           minimum: 1
- *           maximum: 30
- *         description: Lookback window in days
- *       - name: limit
- *         in: query
- *         schema:
- *           type: integer
- *           default: 10
- *           maximum: 20
- *     responses:
- *       200:
- *         description: Trending events fetched (cached for 5 minutes)
- */
 export const getTrendingEvents = asyncHandler(async (req, res) => {
-  const events = await searchService.getTrendingEvents(
-    req.query.days,
-    req.query.limit
+  const days = req.query.days;
+  const limit = req.query.limit;
+
+  const validDays = Math.min(30, Math.max(1, parseInt(days, 10) || 7));
+  const validLimit = Math.min(20, Math.max(1, parseInt(limit, 10) || 10));
+
+  const events = await withCache(
+    `search:trending:${validDays}:${validLimit}`,
+    () => searchRepo.getTrendingEvents(validDays, validLimit),
+    TTL.TRENDING
   );
 
   return res
@@ -128,90 +92,55 @@ export const getTrendingEvents = asyncHandler(async (req, res) => {
     .json(new ApiResponse(HTTP_STATUS.OK, 'Trending events fetched successfully.', events));
 });
 
-// ─── City Autocomplete ────────────────────────────────────────────────────────
-
-/**
- * @swagger
- * /search/cities:
- *   get:
- *     tags: [Search]
- *     summary: Get distinct cities for autocomplete
- *     security: []
- *     parameters:
- *       - name: q
- *         in: query
- *         schema:
- *           type: string
- *         description: City prefix for autocomplete (e.g. 'mum' → Mumbai)
- *       - name: limit
- *         in: query
- *         schema:
- *           type: integer
- *           default: 10
- *     responses:
- *       200:
- *         description: Cities fetched (cached for 60 minutes)
- */
 export const getCities = asyncHandler(async (req, res) => {
-  const cities = await searchService.getCities(req.query.q, req.query.limit);
+  const query = req.query.q || '';
+  const limit = req.query.limit || 10;
+
+  const validLimit = Math.min(20, Math.max(1, parseInt(limit, 10) || 10));
+  const cacheKey = query
+    ? `search:cities:${query.toLowerCase().trim()}:${validLimit}`
+    : `search:cities:all:${validLimit}`;
+
+  const cities = await withCache(
+    cacheKey,
+    () => searchRepo.getDistinctCities(query, validLimit),
+    TTL.CITIES
+  );
 
   return res
     .status(HTTP_STATUS.OK)
     .json(new ApiResponse(HTTP_STATUS.OK, 'Cities fetched successfully.', cities));
 });
 
-// ─── Category Counts ──────────────────────────────────────────────────────────
-
-/**
- * @swagger
- * /search/categories/counts:
- *   get:
- *     tags: [Search]
- *     summary: Get all categories with upcoming event counts
- *     security: []
- *     responses:
- *       200:
- *         description: Category counts fetched (cached for 10 minutes)
- */
 export const getCategoryCounts = asyncHandler(async (_req, res) => {
-  const categories = await searchService.getCategoryCounts();
+  const categories = await withCache(
+    'search:categories:counts',
+    () => searchRepo.getCategoryEventCounts(),
+    TTL.CATEGORIES
+  );
 
   return res
     .status(HTTP_STATUS.OK)
     .json(new ApiResponse(HTTP_STATUS.OK, 'Category counts fetched successfully.', categories));
 });
 
-// ─── Related Events ───────────────────────────────────────────────────────────
-
-/**
- * @swagger
- * /search/events/{eventId}/related:
- *   get:
- *     tags: [Search]
- *     summary: Get events related to a specific event
- *     security: []
- *     parameters:
- *       - name: eventId
- *         in: path
- *         required: true
- *         schema:
- *           type: string
- *       - name: limit
- *         in: query
- *         schema:
- *           type: integer
- *           default: 4
- *           maximum: 10
- *     responses:
- *       200:
- *         description: Related events fetched
- *       404:
- *         description: Event not found
- */
 export const getRelatedEvents = asyncHandler(async (req, res) => {
-  const events = await searchService.getRelatedEvents(
-    req.params.eventId,
-    req.query.limit
+  const { eventId } = req.params;
+  const limit = req.query.limit;
+
+  const Event = (await import('../models/event.model.js')).default;
+  const event = await Event.findById(eventId).select('category date status').lean();
+
+  if (!event) {
+    throw new NotFoundError(MESSAGES.EVENT.NOT_FOUND);
+  }
+
+  const validLimit = Math.min(10, Math.max(1, parseInt(limit, 10) || 4));
+
+  const events = await withCache(
+    `search:related:${eventId}:${validLimit}`,
+    () => searchRepo.getRelatedEvents(eventId, event.category.toString(), event.date, validLimit),
+    TTL.RELATED
   );
 
   return res
@@ -219,33 +148,18 @@ export const getRelatedEvents = asyncHandler(async (req, res) => {
     .json(new ApiResponse(HTTP_STATUS.OK, 'Related events fetched successfully.', events));
 });
 
-// ─── Seat Availability ────────────────────────────────────────────────────────
-
-/**
- * @swagger
- * /search/events/{eventId}/seats:
- *   get:
- *     tags: [Search]
- *     summary: Get real-time seat availability for an event
- *     security: []
- *     description: |
- *       Returns the seat map with current status (available/locked/booked).
- *       Lock owner identity (lockedBy) is intentionally excluded from the response.
- *       Cached for 30 seconds for near-real-time accuracy.
- *     parameters:
- *       - name: eventId
- *         in: path
- *         required: true
- *         schema:
- *           type: string
- *     responses:
- *       200:
- *         description: Seat availability fetched
- *       404:
- *         description: Event not found
- */
 export const getSeatAvailability = asyncHandler(async (req, res) => {
-  const availability = await searchService.getSeatAvailability(req.params.eventId);
+  const { eventId } = req.params;
+
+  const availability = await withCache(
+    `search:seats:${eventId}`,
+    () => searchRepo.getSeatAvailability(eventId),
+    TTL.SEATS
+  );
+
+  if (!availability) {
+    throw new NotFoundError(MESSAGES.EVENT.NOT_FOUND);
+  }
 
   return res
     .status(HTTP_STATUS.OK)

@@ -1,275 +1,245 @@
 /**
  * @file user.controller.js
- * @description HTTP handlers for User profile and Admin user management endpoints.
+ * @description User profile and Admin user management Controller.
  */
 
-import * as userService from '../services/user.service.js';
+import * as userRepo from '../repositories/user.repository.js';
+import * as bookingRepo from '../repositories/booking.repository.js';
+import { uploadImage, deleteImage } from '../utils/uploadToCloudinary.js';
+import { parsePaginationParams, buildTextSearch } from '../utils/pagination.js';
+import { buildPaginationMeta } from '../utils/ApiResponse.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { ApiResponse } from '../utils/ApiResponse.js';
+import {
+  NotFoundError,
+  AuthorizationError,
+  ConflictError,
+  ValidationError,
+} from '../utils/ApiError.js';
 import { HTTP_STATUS } from '../constants/httpStatus.js';
 import { MESSAGES } from '../constants/messages.js';
-import { ValidationError } from '../utils/ApiError.js';
+import { createModuleLogger } from '../utils/logger.js';
 
-/**
- * @swagger
- * tags:
- *   - name: Users
- *     description: User profile management and admin user operations
- */
+const logger = createModuleLogger('UserController');
 
 // ─── Self: Profile Endpoints ─────────────────────────────────────────────────
 
-/**
- * @swagger
- * /users/me:
- *   get:
- *     tags: [Users]
- *     summary: Get the current user's profile and booking statistics
- *     responses:
- *       200:
- *         description: Profile fetched successfully
- */
 export const getMyProfile = asyncHandler(async (req, res) => {
-  const { user, stats } = await userService.getMyProfile(req.user._id);
+  const userId = req.user._id;
+  const user = await userRepo.findUserById(userId);
+  if (!user) throw new NotFoundError(MESSAGES.USER.NOT_FOUND);
+
+  const now = new Date();
+  const Booking = (await import('../models/booking.model.js')).default;
+
+  const [totalBookings, upcomingCount, pastCount] = await Promise.all([
+    Booking.countDocuments({ user: userId, status: 'confirmed' }),
+    Booking.aggregate([
+      { $match: { user: user._id, status: 'confirmed' } },
+      {
+        $lookup: {
+          from: 'events',
+          localField: 'event',
+          foreignField: '_id',
+          as: 'eventData',
+        },
+      },
+      { $unwind: '$eventData' },
+      { $match: { 'eventData.date': { $gt: now } } },
+      { $count: 'count' },
+    ]).then((r) => r[0]?.count || 0),
+    Booking.aggregate([
+      { $match: { user: user._id, status: 'confirmed' } },
+      {
+        $lookup: {
+          from: 'events',
+          localField: 'event',
+          foreignField: '_id',
+          as: 'eventData',
+        },
+      },
+      { $unwind: '$eventData' },
+      { $match: { 'eventData.date': { $lte: now } } },
+      { $count: 'count' },
+    ]).then((r) => r[0]?.count || 0),
+  ]);
+
+  const stats = {
+    totalBookings,
+    upcomingEvents: upcomingCount,
+    pastEvents: pastCount,
+  };
 
   return res
     .status(HTTP_STATUS.OK)
     .json(new ApiResponse(HTTP_STATUS.OK, MESSAGES.USER.FETCHED, { user, stats }));
 });
 
-/**
- * @swagger
- * /users/me:
- *   patch:
- *     tags: [Users]
- *     summary: Update the current user's profile (name, phone only)
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             properties:
- *               name:
- *                 type: string
- *                 minLength: 2
- *                 maxLength: 100
- *               phone:
- *                 type: string
- *                 example: "+919876543210"
- *     responses:
- *       200:
- *         description: Profile updated successfully
- */
 export const updateMyProfile = asyncHandler(async (req, res) => {
-  const user = await userService.updateMyProfile(req.user._id, req.body);
+  const userId = req.user._id;
+  const { name, phone } = req.body;
+
+  const allowedUpdates = {};
+  if (name !== undefined) allowedUpdates.name = name;
+  if (phone !== undefined) allowedUpdates.phone = phone;
+
+  const user = await userRepo.updateUserById(userId, allowedUpdates);
+  if (!user) throw new NotFoundError(MESSAGES.USER.NOT_FOUND);
+
+  logger.info(`Profile updated: user ${userId}`);
 
   return res
     .status(HTTP_STATUS.OK)
     .json(new ApiResponse(HTTP_STATUS.OK, MESSAGES.USER.UPDATED, user));
 });
 
-/**
- * @swagger
- * /users/me/avatar:
- *   post:
- *     tags: [Users]
- *     summary: Upload or replace the current user's avatar image
- *     requestBody:
- *       required: true
- *       content:
- *         multipart/form-data:
- *           schema:
- *             type: object
- *             properties:
- *               avatar:
- *                 type: string
- *                 format: binary
- *     responses:
- *       200:
- *         description: Avatar uploaded successfully
- */
 export const uploadMyAvatar = asyncHandler(async (req, res) => {
   if (!req.file) {
     throw new ValidationError('Please upload an image file.');
   }
 
-  const user = await userService.uploadMyAvatar(req.user._id, req.file.buffer);
+  const userId = req.user._id;
+  const user = await userRepo.findUserById(userId);
+  if (!user) throw new NotFoundError(MESSAGES.USER.NOT_FOUND);
+
+  if (user.avatar && typeof user.avatar === 'object' && user.avatar.publicId) {
+    await deleteImage(user.avatar.publicId);
+  }
+
+  const { url, publicId } = await uploadImage(req.file.buffer, {
+    folder: 'user-avatars',
+    width: 400,
+    height: 400,
+  });
+
+  const updated = await userRepo.updateUserById(userId, {
+    avatar: url,
+  });
+
+  logger.info(`Avatar uploaded for user ${userId}: ${url}`);
 
   return res
     .status(HTTP_STATUS.OK)
-    .json(new ApiResponse(HTTP_STATUS.OK, 'Avatar uploaded successfully.', user));
+    .json(new ApiResponse(HTTP_STATUS.OK, 'Avatar uploaded successfully.', updated));
 });
 
 // ─── Admin: User Management Endpoints ────────────────────────────────────────
 
-/**
- * @swagger
- * /users:
- *   get:
- *     tags: [Users]
- *     summary: Get all users with pagination and filters (admin only)
- *     parameters:
- *       - $ref: '#/components/parameters/PageParam'
- *       - $ref: '#/components/parameters/LimitParam'
- *       - name: role
- *         in: query
- *         schema:
- *           type: string
- *           enum: [customer, organizer, admin]
- *       - name: isActive
- *         in: query
- *         schema:
- *           type: boolean
- *       - name: search
- *         in: query
- *         schema:
- *           type: string
- *     responses:
- *       200:
- *         description: Users fetched successfully
- */
 export const getAllUsers = asyncHandler(async (req, res) => {
-  const { users, meta } = await userService.getAllUsers(req.query);
+  const { page, limit, skip, sortObj } = parsePaginationParams(req.query);
+  const filter = {};
+
+  if (req.query.role) filter.role = req.query.role;
+
+  if (req.query.isActive !== undefined) {
+    filter.isActive = req.query.isActive === 'true' || req.query.isActive === true;
+  }
+
+  const searchFilter = buildTextSearch(req.query.search, ['name', 'email']);
+  if (searchFilter) Object.assign(filter, searchFilter);
+
+  const { users, total } = await userRepo.findAllUsers(filter, { skip, limit, sortObj });
+  const meta = buildPaginationMeta(total, page, limit);
 
   return res
     .status(HTTP_STATUS.OK)
     .json(new ApiResponse(HTTP_STATUS.OK, 'Users fetched successfully.', users, meta));
 });
 
-/**
- * @swagger
- * /users/{userId}:
- *   get:
- *     tags: [Users]
- *     summary: Get a user by ID with booking statistics (admin only)
- *     parameters:
- *       - name: userId
- *         in: path
- *         required: true
- *         schema:
- *           type: string
- *     responses:
- *       200:
- *         description: User fetched successfully
- *       404:
- *         description: User not found
- */
 export const getUserById = asyncHandler(async (req, res) => {
-  const { user, bookingStats } = await userService.getUserById(req.params.userId);
+  const { userId } = req.params;
+  const user = await userRepo.findUserById(userId);
+  if (!user) throw new NotFoundError(MESSAGES.USER.NOT_FOUND);
+
+  const Booking = (await import('../models/booking.model.js')).default;
+  const [totalBookings, cancelledBookings] = await Promise.all([
+    Booking.countDocuments({ user: userId }),
+    Booking.countDocuments({ user: userId, status: 'cancelled' }),
+  ]);
 
   return res
     .status(HTTP_STATUS.OK)
-    .json(new ApiResponse(HTTP_STATUS.OK, MESSAGES.USER.FETCHED, { user, bookingStats }));
+    .json(new ApiResponse(HTTP_STATUS.OK, MESSAGES.USER.FETCHED, { user, bookingStats: { totalBookings, cancelledBookings } }));
 });
 
-/**
- * @swagger
- * /users/{userId}/status:
- *   patch:
- *     tags: [Users]
- *     summary: Activate or suspend a user account (admin only)
- *     parameters:
- *       - name: userId
- *         in: path
- *         required: true
- *         schema:
- *           type: string
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             required: [isActive]
- *             properties:
- *               isActive:
- *                 type: boolean
- *               reason:
- *                 type: string
- *     responses:
- *       200:
- *         description: User status updated
- *       403:
- *         description: Cannot modify another admin's account
- */
 export const updateUserStatus = asyncHandler(async (req, res) => {
-  const user = await userService.updateUserStatus(
-    req.params.userId,
-    req.user._id,
-    req.body.isActive
-  );
+  const targetUserId = req.params.userId;
+  const adminId = req.user._id;
+  const { isActive } = req.body;
 
-  const message = req.body.isActive
+  if (targetUserId.toString() === adminId.toString()) {
+    throw new ConflictError('You cannot change your own account status.');
+  }
+
+  const targetUser = await userRepo.findUserById(targetUserId);
+  if (!targetUser) throw new NotFoundError(MESSAGES.USER.NOT_FOUND);
+
+  if (targetUser.role === 'admin') {
+    throw new AuthorizationError('Cannot modify the status of another admin account.');
+  }
+
+  const updated = await userRepo.updateUserById(targetUserId, { isActive });
+
+  if (!isActive) {
+    const tokenRepo = await import('../repositories/refreshToken.repository.js');
+    await tokenRepo.deleteAllUserRefreshTokens(targetUserId);
+    logger.info(`User ${targetUserId} suspended by admin ${adminId}`);
+  } else {
+    logger.info(`User ${targetUserId} activated by admin ${adminId}`);
+  }
+
+  const message = isActive
     ? MESSAGES.USER.ACCOUNT_ACTIVATED
     : MESSAGES.USER.ACCOUNT_DEACTIVATED;
 
-  return res.status(HTTP_STATUS.OK).json(new ApiResponse(HTTP_STATUS.OK, message, user));
+  return res.status(HTTP_STATUS.OK).json(new ApiResponse(HTTP_STATUS.OK, message, updated));
 });
 
-/**
- * @swagger
- * /users/{userId}/role:
- *   patch:
- *     tags: [Users]
- *     summary: Change a user's role (admin only)
- *     parameters:
- *       - name: userId
- *         in: path
- *         required: true
- *         schema:
- *           type: string
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             required: [role]
- *             properties:
- *               role:
- *                 type: string
- *                 enum: [customer, organizer, admin]
- *     responses:
- *       200:
- *         description: Role updated successfully
- */
 export const updateUserRole = asyncHandler(async (req, res) => {
-  const user = await userService.updateUserRole(
-    req.params.userId,
-    req.user._id,
-    req.body.role
-  );
+  const targetUserId = req.params.userId;
+  const adminId = req.user._id;
+  const { role } = req.body;
+
+  if (targetUserId.toString() === adminId.toString()) {
+    throw new ConflictError('You cannot change your own role.');
+  }
+
+  const targetUser = await userRepo.findUserById(targetUserId);
+  if (!targetUser) throw new NotFoundError(MESSAGES.USER.NOT_FOUND);
+
+  if (targetUser.role === 'admin' && role !== 'admin') {
+    throw new AuthorizationError('Cannot demote another admin account.');
+  }
+
+  const updated = await userRepo.updateUserById(targetUserId, { role });
+  logger.info(`User ${targetUserId} role changed to ${role} by admin ${adminId}`);
 
   return res
     .status(HTTP_STATUS.OK)
-    .json(new ApiResponse(HTTP_STATUS.OK, 'User role updated successfully.', user));
+    .json(new ApiResponse(HTTP_STATUS.OK, 'User role updated successfully.', updated));
 });
 
-/**
- * @swagger
- * /users/{userId}:
- *   delete:
- *     tags: [Users]
- *     summary: Permanently delete a user account (admin only)
- *     description: |
- *       Hard deletes the user document.
- *       Booking history is preserved (financial records).
- *       Cannot delete admin accounts.
- *     parameters:
- *       - name: userId
- *         in: path
- *         required: true
- *         schema:
- *           type: string
- *     responses:
- *       200:
- *         description: User deleted successfully
- *       403:
- *         description: Cannot delete another admin
- */
 export const deleteUser = asyncHandler(async (req, res) => {
-  await userService.deleteUser(req.params.userId, req.user._id);
+  const targetUserId = req.params.userId;
+  const adminId = req.user._id;
+
+  if (targetUserId.toString() === adminId.toString()) {
+    throw new ConflictError('You cannot delete your own account.');
+  }
+
+  const targetUser = await userRepo.findUserById(targetUserId);
+  if (!targetUser) throw new NotFoundError(MESSAGES.USER.NOT_FOUND);
+
+  if (targetUser.role === 'admin') {
+    throw new AuthorizationError('Cannot delete another admin account.');
+  }
+
+  if (targetUser.avatar?.publicId) {
+    await deleteImage(targetUser.avatar.publicId);
+  }
+
+  await userRepo.deleteUserById(targetUserId);
+  logger.info(`User ${targetUserId} (${targetUser.email}) deleted by admin ${adminId}`);
 
   return res
     .status(HTTP_STATUS.OK)

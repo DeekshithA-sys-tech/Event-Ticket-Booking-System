@@ -1,127 +1,105 @@
 /**
  * @file analytics.controller.js
- * @description HTTP handlers for the Analytics Dashboard.
- *
- * ACCESS:
- *   All analytics endpoints require authentication.
- *   Organizers see their own data only.
- *   Admins see platform-wide data (or any organizer's data via ?organizerId=).
+ * @description Analytics Dashboard Controller with Redis caching and role-scoped pipelines.
  */
 
-import * as analyticsService from '../services/analytics.service.js';
+import * as analyticsRepo from '../repositories/analytics.repository.js';
+import * as eventRepo from '../repositories/event.repository.js';
+import { withCache } from '../utils/cache.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { ApiResponse } from '../utils/ApiResponse.js';
+import { NotFoundError } from '../utils/ApiError.js';
 import { HTTP_STATUS } from '../constants/httpStatus.js';
+import { MESSAGES } from '../constants/messages.js';
+import { createModuleLogger } from '../utils/logger.js';
 
-/**
- * @swagger
- * tags:
- *   - name: Analytics
- *     description: Organizer dashboard and platform analytics (admin)
- */
+const logger = createModuleLogger('AnalyticsController');
 
-// ─── Overview ─────────────────────────────────────────────────────────────────
+const TTL = {
+  ORGANIZER: 10 * 60,   // 10 minutes
+  ADMIN:     15 * 60,   // 15 minutes
+};
 
-/**
- * @swagger
- * /analytics/overview:
- *   get:
- *     tags: [Analytics]
- *     summary: Get dashboard overview (revenue, bookings, events, rating)
- *     description: |
- *       **Organizer**: Returns their own events' metrics.
- *       **Admin**: Returns platform-wide metrics, or a specific organizer's
- *       metrics when `?organizerId=` is passed.
- *       Cached for 10 minutes.
- *     parameters:
- *       - name: organizerId
- *         in: query
- *         schema:
- *           type: string
- *         description: Admin only — scope to a specific organizer
- *     responses:
- *       200:
- *         description: Overview metrics
- */
+// ─── Controller Handlers ───────────────────────────────────────────────────────
+
 export const getOverview = asyncHandler(async (req, res) => {
-  const data = await analyticsService.getOverview(
-    req.user._id,
-    req.user.role,
-    req.query.organizerId
+  const userId = req.user._id;
+  const userRole = req.user.role;
+  const targetOrganizerId = req.query.organizerId || null;
+
+  let scopeId;
+  if (userRole === 'admin') {
+    scopeId = targetOrganizerId || null; // null = platform-wide
+  } else {
+    scopeId = userId.toString(); // Organizers see their own data
+  }
+
+  const cacheKey = scopeId
+    ? `analytics:org-${scopeId}:overview`
+    : 'analytics:platform:overview';
+
+  const ttl = scopeId ? TTL.ORGANIZER : TTL.ADMIN;
+
+  const data = await withCache(
+    cacheKey,
+    () => analyticsRepo.getOverview(scopeId),
+    ttl
   );
+
+  logger.info(`[Analytics] Overview fetched — scope: ${scopeId || 'platform'}`);
 
   return res
     .status(HTTP_STATUS.OK)
     .json(new ApiResponse(HTTP_STATUS.OK, 'Analytics overview fetched.', data));
 });
 
-// ─── Per-Event Analytics ──────────────────────────────────────────────────────
-
-/**
- * @swagger
- * /analytics/events/{eventId}:
- *   get:
- *     tags: [Analytics]
- *     summary: Deep-dive analytics for a single event
- *     description: |
- *       Returns: occupancy rate, revenue, 30-day booking timeline, rating distribution.
- *       Organizers can only access their own events.
- *     parameters:
- *       - name: eventId
- *         in: path
- *         required: true
- *         schema:
- *           type: string
- *     responses:
- *       200:
- *         description: Event analytics data
- *       403:
- *         description: Organizer tried to view another's event analytics
- */
 export const getEventAnalytics = asyncHandler(async (req, res) => {
-  const data = await analyticsService.getEventAnalytics(
-    req.params.eventId,
-    req.user._id,
-    req.user.role
+  const { eventId } = req.params;
+  const userId = req.user._id;
+  const userRole = req.user.role;
+
+  if (userRole !== 'admin') {
+    const event = await eventRepo.findEventByIdAndOrganizer(eventId, userId);
+    if (!event) {
+      throw new NotFoundError(MESSAGES.EVENT.NOT_FOUND);
+    }
+  }
+
+  const cacheKey = `analytics:event:${eventId}`;
+
+  const data = await withCache(
+    cacheKey,
+    () => analyticsRepo.getEventAnalytics(eventId),
+    TTL.ORGANIZER
   );
+
+  if (!data) throw new NotFoundError(MESSAGES.EVENT.NOT_FOUND);
 
   return res
     .status(HTTP_STATUS.OK)
     .json(new ApiResponse(HTTP_STATUS.OK, 'Event analytics fetched.', data));
 });
 
-// ─── Booking Timeline ─────────────────────────────────────────────────────────
-
-/**
- * @swagger
- * /analytics/bookings/timeline:
- *   get:
- *     tags: [Analytics]
- *     summary: Daily booking volume chart data
- *     description: Returns one data point per day. Missing days filled with zeros.
- *     parameters:
- *       - name: days
- *         in: query
- *         schema:
- *           type: integer
- *           default: 30
- *           minimum: 7
- *           maximum: 90
- *         description: Lookback window in days
- *       - name: organizerId
- *         in: query
- *         schema:
- *           type: string
- *         description: Admin only — scope to a specific organizer
- *     responses:
- *       200:
- *         description: Array of daily { date, bookings, revenue, seatsBooked, peakHour }
- */
 export const getBookingTimeline = asyncHandler(async (req, res) => {
-  const data = await analyticsService.getBookingTimeline(
-    req.user._id,
-    req.user.role,
-    req.query
+  const userId = req.user._id;
+  const userRole = req.user.role;
+  const days = Math.min(90, Math.max(7, parseInt(req.query.days, 10) || 30));
+
+  let scopeId;
+  if (userRole === 'admin') {
+    scopeId = req.query.organizerId || null;
+  } else {
+    scopeId = userId.toString();
+  }
+
+  const cacheKey = scopeId
+    ? `analytics:org-${scopeId}:timeline:${days}`
+    : `analytics:platform:timeline:${days}`;
+
+  const data = await withCache(
+    cacheKey,
+    () => analyticsRepo.getBookingTimeline(scopeId, days),
+    TTL.ORGANIZER
   );
 
   return res
@@ -129,36 +107,26 @@ export const getBookingTimeline = asyncHandler(async (req, res) => {
     .json(new ApiResponse(HTTP_STATUS.OK, 'Booking timeline fetched.', data));
 });
 
-// ─── Revenue Breakdown ────────────────────────────────────────────────────────
-
-/**
- * @swagger
- * /analytics/revenue/breakdown:
- *   get:
- *     tags: [Analytics]
- *     summary: Revenue breakdown by event and by category
- *     parameters:
- *       - name: top
- *         in: query
- *         schema:
- *           type: integer
- *           default: 10
- *           maximum: 20
- *         description: Number of top events to include
- *       - name: organizerId
- *         in: query
- *         schema:
- *           type: string
- *         description: Admin only
- *     responses:
- *       200:
- *         description: "{ byEvent: [...], byCategory: [...] }"
- */
 export const getRevenueBreakdown = asyncHandler(async (req, res) => {
-  const data = await analyticsService.getRevenueBreakdown(
-    req.user._id,
-    req.user.role,
-    req.query
+  const userId = req.user._id;
+  const userRole = req.user.role;
+  const topN = Math.min(20, Math.max(5, parseInt(req.query.top, 10) || 10));
+
+  let scopeId;
+  if (userRole === 'admin') {
+    scopeId = req.query.organizerId || null;
+  } else {
+    scopeId = userId.toString();
+  }
+
+  const cacheKey = scopeId
+    ? `analytics:org-${scopeId}:revenue:${topN}`
+    : `analytics:platform:revenue:${topN}`;
+
+  const data = await withCache(
+    cacheKey,
+    () => analyticsRepo.getRevenueBreakdown(scopeId, topN),
+    TTL.ORGANIZER
   );
 
   return res
@@ -166,34 +134,25 @@ export const getRevenueBreakdown = asyncHandler(async (req, res) => {
     .json(new ApiResponse(HTTP_STATUS.OK, 'Revenue breakdown fetched.', data));
 });
 
-// ─── Review Summary ───────────────────────────────────────────────────────────
-
-/**
- * @swagger
- * /analytics/reviews/summary:
- *   get:
- *     tags: [Analytics]
- *     summary: Rating trends and review summary (last 12 months)
- *     description: |
- *       Returns:
- *       - `monthlyTrend`: avg rating + review count per month
- *       - `topRatedEvents`: top 5 best-rated events
- *       - `recentReviews`: 5 most recent reviews
- *     parameters:
- *       - name: organizerId
- *         in: query
- *         schema:
- *           type: string
- *         description: Admin only
- *     responses:
- *       200:
- *         description: Rating trends and recent reviews
- */
 export const getReviewSummary = asyncHandler(async (req, res) => {
-  const data = await analyticsService.getReviewSummary(
-    req.user._id,
-    req.user.role,
-    req.query
+  const userId = req.user._id;
+  const userRole = req.user.role;
+
+  let scopeId;
+  if (userRole === 'admin') {
+    scopeId = req.query.organizerId || null;
+  } else {
+    scopeId = userId.toString();
+  }
+
+  const cacheKey = scopeId
+    ? `analytics:org-${scopeId}:reviews`
+    : 'analytics:platform:reviews';
+
+  const data = await withCache(
+    cacheKey,
+    () => analyticsRepo.getReviewSummary(scopeId),
+    TTL.ORGANIZER
   );
 
   return res
@@ -201,26 +160,12 @@ export const getReviewSummary = asyncHandler(async (req, res) => {
     .json(new ApiResponse(HTTP_STATUS.OK, 'Review summary fetched.', data));
 });
 
-// ─── Admin: Platform Stats ────────────────────────────────────────────────────
-
-/**
- * @swagger
- * /analytics/platform/stats:
- *   get:
- *     tags: [Analytics]
- *     summary: Platform-wide stats (admin only)
- *     description: |
- *       Returns user counts by role, total booking/revenue stats,
- *       and the platform-wide cancellation rate.
- *       Cached for 15 minutes.
- *     responses:
- *       200:
- *         description: Platform metrics
- *       403:
- *         description: Admin access required
- */
-export const getPlatformStats = asyncHandler(async (req, res) => {
-  const data = await analyticsService.getPlatformStats();
+export const getPlatformStats = asyncHandler(async (_req, res) => {
+  const data = await withCache(
+    'analytics:platform:stats',
+    () => analyticsRepo.getPlatformStats(),
+    TTL.ADMIN
+  );
 
   return res
     .status(HTTP_STATUS.OK)

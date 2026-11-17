@@ -1,23 +1,6 @@
 /**
  * @file event.routes.js
  * @description Event route definitions.
- *
- * ACCESS CONTROL SUMMARY:
- * -----------------------
- * GET  /events                    → Public
- * GET  /events/:eventId           → Public
- * GET  /events/organizer/my-events → Organizer only
- * POST /events                    → Organizer only
- * PATCH /events/:eventId          → Organizer only (own events)
- * POST /events/:eventId/banner    → Organizer only (own events)
- * DELETE /events/:eventId         → Organizer (own) or Admin
- * PATCH /events/:eventId/status   → Admin only
- *
- * ROUTE ORDER MATTERS:
- * --------------------
- * '/organizer/my-events' must be registered BEFORE '/:eventId'.
- * Otherwise Express matches 'organizer' as the :eventId param.
- * This is a classic Express routing pitfall.
  */
 
 import { Router } from 'express';
@@ -33,28 +16,28 @@ import {
   eventParamSchema,
   eventListQuerySchema,
 } from '../validators/event.validator.js';
-import { eventReviewsRouter } from './review.routes.js'; // Sprint 8
+import { eventReviewsRouter } from './review.routes.js';
 
 const router = Router();
 
 // ── Public Routes ─────────────────────────────────────────────────────────────
 router.get('/', validate(eventListQuerySchema), eventController.getEvents);
 
-// IMPORTANT: This must come before /:eventId to avoid param conflict
+// IMPORTANT: Must come before /:eventId
 router.get(
   '/organizer/my-events',
   protect,
-  organizerOnly,
+  adminOrOrganizer,
   eventController.getMyEvents
 );
 
 router.get('/:eventId', validate(eventParamSchema), eventController.getEventById);
 
-// ── Organizer Routes ──────────────────────────────────────────────────────────
+// ── Event Creation & Management (Organizer or Admin) ────────────────────────
 router.post(
   '/',
   protect,
-  organizerOnly,
+  adminOrOrganizer,
   validate(createEventSchema),
   eventController.createEvent
 );
@@ -62,7 +45,7 @@ router.post(
 router.patch(
   '/:eventId',
   protect,
-  organizerOnly,
+  adminOrOrganizer,
   validate(updateEventSchema),
   eventController.updateEvent
 );
@@ -70,12 +53,11 @@ router.patch(
 router.post(
   '/:eventId/banner',
   protect,
-  organizerOnly,
-  uploadSingle('banner'), // Multer middleware — parses multipart/form-data
+  adminOrOrganizer,
+  uploadSingle('banner'),
   eventController.uploadEventBanner
 );
 
-// ── Organizer or Admin Routes ─────────────────────────────────────────────────
 router.delete(
   '/:eventId',
   protect,
@@ -93,9 +75,7 @@ router.patch(
   eventController.updateEventStatus
 );
 
-// ── Sprint 8: Event Reviews (nested resource) ────────────────────────────
-// GET /events/:eventId/reviews → public (optional auth for admin extras)
-// mergeParams: true in eventReviewsRouter allows it to read :eventId
+// ── Event Reviews ─────────────────────────────────────────────────────────────
 router.use('/:eventId/reviews', eventReviewsRouter);
 
 export default router;

@@ -1,277 +1,218 @@
 /**
  * @file review.controller.js
- * @description HTTP handlers for Review endpoints.
+ * @description Review & Ratings Controller with verified booking eligibility check and cache invalidation.
  */
 
-import * as reviewService from '../services/review.service.js';
+import * as reviewRepo from '../repositories/review.repository.js';
+import * as eventRepo from '../repositories/event.repository.js';
+import * as bookingRepo from '../repositories/booking.repository.js';
+import { cacheDel, cacheFlushPattern } from '../utils/cache.js';
+import { parsePaginationParams } from '../utils/pagination.js';
+import { buildPaginationMeta } from '../utils/ApiResponse.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { ApiResponse } from '../utils/ApiResponse.js';
+import {
+  NotFoundError,
+  AuthorizationError,
+  ConflictError,
+  ValidationError,
+} from '../utils/ApiError.js';
 import { HTTP_STATUS } from '../constants/httpStatus.js';
 import { MESSAGES } from '../constants/messages.js';
+import { createModuleLogger } from '../utils/logger.js';
 
-/**
- * @swagger
- * tags:
- *   - name: Reviews
- *     description: Event reviews, ratings, and moderation
- */
+const logger = createModuleLogger('ReviewController');
 
-// ─── Get Reviews for an Event ─────────────────────────────────────────────────
+const invalidateReviewCaches = async (eventId) => {
+  await Promise.all([
+    cacheDel(`search:related:${eventId}`),
+    cacheFlushPattern('search:events:*'),
+    cacheFlushPattern('search:trending:*'),
+  ]);
+};
 
-/**
- * @swagger
- * /events/{eventId}/reviews:
- *   get:
- *     tags: [Reviews]
- *     summary: Get paginated reviews for an event
- *     security: []
- *     parameters:
- *       - name: eventId
- *         in: path
- *         required: true
- *         schema:
- *           type: string
- *       - name: sort
- *         in: query
- *         schema:
- *           type: string
- *           enum: [newest, oldest, highest, lowest]
- *           default: newest
- *       - name: includeFlagged
- *         in: query
- *         schema:
- *           type: boolean
- *         description: Admin only — include flagged reviews
- *       - $ref: '#/components/parameters/PageParam'
- *       - $ref: '#/components/parameters/LimitParam'
- *     responses:
- *       200:
- *         description: Reviews fetched with rating aggregation in meta
- */
+// ─── Controller Handlers ───────────────────────────────────────────────────────
+
 export const getEventReviews = asyncHandler(async (req, res) => {
-  const { reviews, meta } = await reviewService.getEventReviews(
-    req.params.eventId,
-    req.query,
-    req.user?.role // Optional — no auth required, but admin gets extra data
-  );
+  const { eventId } = req.params;
+  const event = await eventRepo.findEventById(eventId);
+
+  if (!event) throw new NotFoundError(MESSAGES.EVENT.NOT_FOUND);
+
+  const { page, limit, skip } = parsePaginationParams(req.query);
+  const sort = req.query.sort || 'newest';
+  const includeFlagged = req.user?.role === 'admin' && req.query.includeFlagged === 'true';
+
+  const { reviews, total } = await reviewRepo.findReviewsByEvent(eventId, {
+    skip,
+    limit,
+    sort,
+    includeFlagged,
+  });
+
+  const meta = {
+    ...buildPaginationMeta(total, page, limit),
+    eventRating: {
+      average: event.rating?.average || 0,
+      count: event.rating?.count || 0,
+      distribution: event.rating?.distribution || {},
+    },
+  };
 
   return res
     .status(HTTP_STATUS.OK)
     .json(new ApiResponse(HTTP_STATUS.OK, MESSAGES.REVIEW.LIST_FETCHED, reviews, meta));
 });
 
-// ─── Create Review ────────────────────────────────────────────────────────────
-
-/**
- * @swagger
- * /reviews:
- *   post:
- *     tags: [Reviews]
- *     summary: Submit a review for an event
- *     description: |
- *       Eligibility requirements:
- *       1. Must have a confirmed booking for the event
- *       2. Event must have already taken place
- *       3. Cannot review the same event twice
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             required: [eventId, rating, body]
- *             properties:
- *               eventId:
- *                 type: string
- *               rating:
- *                 type: integer
- *                 minimum: 1
- *                 maximum: 5
- *               title:
- *                 type: string
- *                 maxLength: 150
- *               body:
- *                 type: string
- *                 minLength: 10
- *                 maxLength: 2000
- *     responses:
- *       201:
- *         description: Review created successfully
- *       400:
- *         description: Eligibility check failed or event hasn't happened yet
- *       409:
- *         description: Already reviewed this event
- */
 export const createReview = asyncHandler(async (req, res) => {
-  const review = await reviewService.createReview(req.user._id, req.body);
+  const userId = req.user._id;
+  const { eventId, rating, title, body } = req.body;
+
+  // 1. Check event exists
+  const event = await eventRepo.findEventById(eventId);
+  if (!event) throw new NotFoundError(MESSAGES.EVENT.NOT_FOUND);
+
+  // 2. Check event has already happened
+  if (new Date(event.date) > new Date()) {
+    throw new ValidationError(
+      'You can only review events that have already taken place.'
+    );
+  }
+
+  // 3. Check the user has a confirmed booking for this event
+  const hasBooking = await bookingRepo.userHasBookingForEvent(userId, eventId);
+  if (!hasBooking) {
+    throw new ValidationError(MESSAGES.REVIEW.NOT_ELIGIBLE);
+  }
+
+  // 4. Find the qualifying booking
+  const { bookings } = await bookingRepo.findBookingsByUser(userId, { limit: 100 });
+  const qualifyingBooking = bookings.find(
+    (b) => b.event?.toString() === eventId.toString() && b.status === 'confirmed'
+  );
+
+  // 5. Check for duplicate review
+  const existing = await reviewRepo.findUserReviewForEvent(userId, eventId);
+  if (existing) {
+    throw new ConflictError(MESSAGES.REVIEW.ALREADY_REVIEWED);
+  }
+
+  // 6. Create the review
+  const review = await reviewRepo.createReview({
+    user: userId,
+    event: eventId,
+    booking: qualifyingBooking?._id || qualifyingBooking?.id,
+    rating,
+    title: title || null,
+    body,
+  });
+
+  // 7. Invalidate caches
+  await invalidateReviewCaches(eventId);
+
+  logger.info(`[Review] User ${userId} reviewed event ${eventId} → ${rating}★`);
 
   return res
     .status(HTTP_STATUS.CREATED)
     .json(new ApiResponse(HTTP_STATUS.CREATED, MESSAGES.REVIEW.CREATED, review));
 });
 
-// ─── Update Review ────────────────────────────────────────────────────────────
-
-/**
- * @swagger
- * /reviews/{reviewId}:
- *   patch:
- *     tags: [Reviews]
- *     summary: Update your own review (rating, title, body)
- *     parameters:
- *       - name: reviewId
- *         in: path
- *         required: true
- *         schema:
- *           type: string
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             properties:
- *               rating:
- *                 type: integer
- *                 minimum: 1
- *                 maximum: 5
- *               title:
- *                 type: string
- *               body:
- *                 type: string
- *     responses:
- *       200:
- *         description: Review updated (isEdited=true, editedAt set)
- *       403:
- *         description: Cannot edit another user's review
- */
 export const updateReview = asyncHandler(async (req, res) => {
-  const review = await reviewService.updateReview(
-    req.params.reviewId,
-    req.user._id,
-    req.body
-  );
+  const { reviewId } = req.params;
+  const userId = req.user._id;
+
+  const review = await reviewRepo.findReviewById(reviewId);
+  if (!review) throw new NotFoundError(MESSAGES.REVIEW.NOT_FOUND);
+
+  if (review.user._id.toString() !== userId.toString()) {
+    throw new AuthorizationError(MESSAGES.AUTH.FORBIDDEN);
+  }
+
+  const updated = await reviewRepo.updateReviewById(reviewId, req.body);
+  await invalidateReviewCaches(review.event._id.toString());
+
+  logger.info(`[Review] Review ${reviewId} updated by user ${userId}`);
 
   return res
     .status(HTTP_STATUS.OK)
-    .json(new ApiResponse(HTTP_STATUS.OK, MESSAGES.REVIEW.UPDATED, review));
+    .json(new ApiResponse(HTTP_STATUS.OK, MESSAGES.REVIEW.UPDATED, updated));
 });
 
-// ─── Delete Review ────────────────────────────────────────────────────────────
-
-/**
- * @swagger
- * /reviews/{reviewId}:
- *   delete:
- *     tags: [Reviews]
- *     summary: Delete a review (owner or admin)
- *     parameters:
- *       - name: reviewId
- *         in: path
- *         required: true
- *         schema:
- *           type: string
- *     responses:
- *       200:
- *         description: Review deleted, event rating recalculated
- *       403:
- *         description: Cannot delete another user's review
- */
 export const deleteReview = asyncHandler(async (req, res) => {
-  await reviewService.deleteReview(req.params.reviewId, req.user._id, req.user.role);
+  const { reviewId } = req.params;
+  const userId = req.user._id;
+  const userRole = req.user.role;
+
+  const review = await reviewRepo.findReviewById(reviewId);
+  if (!review) throw new NotFoundError(MESSAGES.REVIEW.NOT_FOUND);
+
+  const isOwner = review.user._id.toString() === userId.toString();
+  const isAdmin = userRole === 'admin';
+
+  if (!isOwner && !isAdmin) {
+    throw new AuthorizationError(MESSAGES.AUTH.FORBIDDEN);
+  }
+
+  const eventId = review.event._id.toString();
+  await reviewRepo.deleteReviewById(reviewId);
+
+  await invalidateReviewCaches(eventId);
+  logger.info(`[Review] Review ${reviewId} deleted by ${userRole} ${userId}`);
 
   return res
     .status(HTTP_STATUS.OK)
     .json(new ApiResponse(HTTP_STATUS.OK, MESSAGES.REVIEW.DELETED));
 });
 
-// ─── Flag Review (admin) ──────────────────────────────────────────────────────
-
-/**
- * @swagger
- * /reviews/{reviewId}/flag:
- *   post:
- *     tags: [Reviews]
- *     summary: Flag a review for moderation (admin only)
- *     description: |
- *       Flagged reviews are hidden from public listing but not deleted.
- *       The review remains in the DB for audit/legal purposes.
- *     parameters:
- *       - name: reviewId
- *         in: path
- *         required: true
- *         schema:
- *           type: string
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             required: [reason]
- *             properties:
- *               reason:
- *                 type: string
- *                 minLength: 5
- *     responses:
- *       200:
- *         description: Review flagged — excluded from public listing and rating
- */
 export const flagReview = asyncHandler(async (req, res) => {
-  const review = await reviewService.flagReview(
-    req.params.reviewId,
-    req.user._id,
-    req.body.reason
-  );
+  const { reviewId } = req.params;
+  const adminId = req.user._id;
+  const { reason } = req.body;
+
+  const review = await reviewRepo.findReviewById(reviewId);
+  if (!review) throw new NotFoundError(MESSAGES.REVIEW.NOT_FOUND);
+
+  if (review.isFlagged) {
+    throw new ConflictError('This review is already flagged.');
+  }
+
+  const updated = await reviewRepo.setReviewFlagged(reviewId, true, reason, adminId);
+  const eventId = review.event._id?.toString() || review.event.toString();
+  await invalidateReviewCaches(eventId);
+
+  logger.info(`[Review] Review ${reviewId} flagged by admin ${adminId}: "${reason}"`);
 
   return res
     .status(HTTP_STATUS.OK)
-    .json(new ApiResponse(HTTP_STATUS.OK, MESSAGES.REVIEW.FLAGGED, review));
+    .json(new ApiResponse(HTTP_STATUS.OK, MESSAGES.REVIEW.FLAGGED, updated));
 });
 
-// ─── Unflag Review (admin) ────────────────────────────────────────────────────
-
-/**
- * @swagger
- * /reviews/{reviewId}/unflag:
- *   post:
- *     tags: [Reviews]
- *     summary: Remove the flag from a review (admin only)
- *     parameters:
- *       - name: reviewId
- *         in: path
- *         required: true
- *         schema:
- *           type: string
- *     responses:
- *       200:
- *         description: Review restored to public listing
- */
 export const unflagReview = asyncHandler(async (req, res) => {
-  const review = await reviewService.unflagReview(req.params.reviewId, req.user._id);
+  const { reviewId } = req.params;
+  const adminId = req.user._id;
+
+  const review = await reviewRepo.findReviewById(reviewId);
+  if (!review) throw new NotFoundError(MESSAGES.REVIEW.NOT_FOUND);
+
+  if (!review.isFlagged) {
+    throw new ValidationError('This review is not currently flagged.');
+  }
+
+  const updated = await reviewRepo.setReviewFlagged(reviewId, false);
+  const eventId = review.event._id?.toString() || review.event.toString();
+  await invalidateReviewCaches(eventId);
+
+  logger.info(`[Review] Review ${reviewId} unflagged by admin ${adminId}`);
 
   return res
     .status(HTTP_STATUS.OK)
-    .json(new ApiResponse(HTTP_STATUS.OK, MESSAGES.REVIEW.UNFLAGGED, review));
+    .json(new ApiResponse(HTTP_STATUS.OK, MESSAGES.REVIEW.UNFLAGGED, updated));
 });
 
-// ─── Admin: Flagged Review Queue ──────────────────────────────────────────────
-
-/**
- * @swagger
- * /reviews/flagged:
- *   get:
- *     tags: [Reviews]
- *     summary: Get all flagged reviews for moderation (admin only)
- *     parameters:
- *       - $ref: '#/components/parameters/PageParam'
- *       - $ref: '#/components/parameters/LimitParam'
- *     responses:
- *       200:
- *         description: Flagged review queue fetched
- */
 export const getFlaggedReviews = asyncHandler(async (req, res) => {
-  const { reviews, meta } = await reviewService.getFlaggedReviews(req.query);
+  const { page, limit, skip } = parsePaginationParams(req.query);
+  const { reviews, total } = await reviewRepo.findFlaggedReviews({ skip, limit });
+  const meta = buildPaginationMeta(total, page, limit);
 
   return res
     .status(HTTP_STATUS.OK)

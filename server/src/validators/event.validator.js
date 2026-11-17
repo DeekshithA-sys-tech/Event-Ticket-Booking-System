@@ -76,7 +76,8 @@ export const createEventSchema = z.object({
         // Ensure row labels are unique within this event
         const rowNames = rows.map((r) => r.row);
         return new Set(rowNames).size === rowNames.length;
-      }, 'Row labels must be unique'),
+      }, 'Row labels must be unique')
+      .optional(),
   }),
 });
 

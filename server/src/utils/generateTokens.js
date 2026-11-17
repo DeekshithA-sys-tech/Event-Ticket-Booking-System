@@ -121,9 +121,9 @@ export const getRefreshTokenExpiryDate = () => {
  * @returns {import('express').CookieOptions}
  */
 export const getRefreshTokenCookieOptions = () => ({
-  httpOnly: true,     // Not accessible by JavaScript → XSS protection
-  secure: env.isProd, // HTTPS only in production
-  sameSite: env.isProd ? 'strict' : 'lax', // CSRF protection
+  httpOnly: true,
+  secure: env.isProd,
+  sameSite: env.isProd ? 'strict' : 'lax',
   maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days in milliseconds
-  path: '/api/v1/auth', // Cookie only sent to auth endpoints (reduced exposure)
+  path: '/', // Set to root path for seamless cross-origin dev proxy cookie sending
 });

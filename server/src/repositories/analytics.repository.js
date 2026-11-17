@@ -508,7 +508,7 @@ export const getRevenueBreakdown = async (organizerId = null, topN = 10) => {
           as: 'category',
         },
       },
-      { $unwind: { path: '$category', preserveNullAndEmpty: true } },
+      { $unwind: { path: '$category', preserveNullAndEmptyArrays: true } },
       {
         $project: {
           _id: 0,

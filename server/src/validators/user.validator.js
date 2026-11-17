@@ -26,12 +26,14 @@ import { z } from 'zod';
 // ─── Reusable Sub-Schemas ─────────────────────────────────────────────────────
 
 const phoneSchema = z
-  .string()
-  .regex(
-    /^\+?[1-9]\d{6,14}$/,
-    'Phone must be a valid international number (e.g. +919876543210)'
-  )
-  .nullable()
+  .union([
+    z.string().trim().regex(
+      /^\+?[0-9]{7,15}$/,
+      'Phone must be a valid number (e.g. +919876543210 or 9876543210)'
+    ),
+    z.literal(''),
+    z.null(),
+  ])
   .optional();
 
 const strongPasswordSchema = z
