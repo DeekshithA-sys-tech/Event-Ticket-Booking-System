@@ -139,6 +139,12 @@ const bookingSchema = new mongoose.Schema(
       maxlength: [500, 'Cancellation reason cannot exceed 500 characters'],
       default: null,
     },
+    refund: {
+      refundId: { type: String, default: null },
+      amount: { type: Number, default: 0 },
+      refundedAt: { type: Date, default: null },
+      status: { type: String, enum: ['pending', 'processed', 'completed'], default: null },
+    },
   },
   {
     timestamps: true, // createdAt = booking confirmation time

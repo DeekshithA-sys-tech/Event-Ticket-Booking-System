@@ -1,202 +1,468 @@
 /**
  * @file booking.controller.js
- * @description HTTP handlers for Booking endpoints.
+ * @description Booking Controller (Seat Locking, Mongoose Atomic Transactions, PDF Generation, QR Delivery).
  */
 
-import * as bookingService from '../services/booking.service.js';
+import mongoose from 'mongoose';
+import * as bookingRepo from '../repositories/booking.repository.js';
+import * as eventRepo from '../repositories/event.repository.js';
+import { lockSeats as acquireSeatLocks, releaseSeats, verifyLocks } from '../utils/seatLock.js';
+import { generateBookingId } from '../utils/generateBookingId.js';
+import { generateQrCode } from '../utils/generateQrCode.js';
+import { generatePdfTicket } from '../utils/generatePdfTicket.js';
+import { addEmailJob } from '../jobs/queues/email.queue.js';
+import { parsePaginationParams } from '../utils/pagination.js';
+import { buildPaginationMeta } from '../utils/ApiResponse.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { ApiResponse } from '../utils/ApiResponse.js';
+import {
+  NotFoundError,
+  ValidationError,
+  ConflictError,
+  AuthorizationError,
+} from '../utils/ApiError.js';
 import { HTTP_STATUS } from '../constants/httpStatus.js';
 import { MESSAGES } from '../constants/messages.js';
-import { generatePdfTicket } from '../utils/generatePdfTicket.js';
+import { EVENT_STATUS, SEAT_STATUS, BOOKING_STATUS } from '../constants/eventStatus.js';
+import { createModuleLogger } from '../utils/logger.js';
 
-
-/**
- * @swagger
- * tags:
- *   - name: Bookings
- *     description: Seat selection, booking confirmation, and management
- */
-
-// ─── Step 1: Lock Seats ───────────────────────────────────────────────────────
+const logger = createModuleLogger('BookingController');
 
 /**
- * @swagger
- * /bookings/lock-seats:
- *   post:
- *     tags: [Bookings]
- *     summary: Lock selected seats for 10 minutes
- *     description: |
- *       Acquires Redis locks on selected seats atomically.
- *       The locks are held for 10 minutes — the user must confirm
- *       the booking within this window.
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             required: [eventId, seatIds]
- *             properties:
- *               eventId:
- *                 type: string
- *               seatIds:
- *                 type: array
- *                 items:
- *                   type: string
- *                 example: ["A-1", "A-2"]
- *     responses:
- *       200:
- *         description: Seats locked successfully
- *       409:
- *         description: One or more seats are already taken
+ * Validates requested seats against the event layout.
  */
+const resolveSeatDetails = (event, seatIds, userId = null) => {
+  const resolvedSeats = [];
+
+  for (const seatId of seatIds) {
+    let found = false;
+
+    for (const rowObj of event.seatLayout) {
+      const seat = rowObj.seats.find((s) => s.seatId === seatId);
+      if (seat) {
+        const isLockedBySelf =
+          seat.status === SEAT_STATUS.LOCKED &&
+          seat.lockedBy &&
+          seat.lockedBy.toString() === userId?.toString();
+
+        if (seat.status !== SEAT_STATUS.AVAILABLE && !isLockedBySelf) {
+          throw new ConflictError(
+            `Seat ${seatId} is not available (status: ${seat.status}).`
+          );
+        }
+        resolvedSeats.push({
+          seatId: seat.seatId,
+          row: rowObj.row,
+          seatNumber: seat.seatNumber,
+        });
+        found = true;
+        break;
+      }
+    }
+
+    if (!found) {
+      throw new ValidationError(`Seat ${seatId} does not exist in this event.`);
+    }
+  }
+
+  return resolvedSeats;
+};
+
+/**
+ * Core atomic booking cancellation logic (reusable by Admin force-cancellations).
+ */
+export const cancelBookingCore = async (bookingId, userId, userRole, reason) => {
+  const booking = await bookingRepo.findBookingByBookingId(bookingId);
+
+  if (!booking) throw new NotFoundError(MESSAGES.BOOKING.NOT_FOUND);
+
+  const bookingUserId = booking.user?._id
+    ? booking.user._id.toString()
+    : booking.user
+    ? booking.user.toString()
+    : null;
+
+  if (userRole !== 'admin' && bookingUserId !== userId.toString()) {
+    throw new AuthorizationError(MESSAGES.AUTH.FORBIDDEN);
+  }
+
+  if (booking.status === BOOKING_STATUS.CANCELLED) {
+    throw new ValidationError(MESSAGES.BOOKING.CANNOT_CANCEL);
+  }
+
+  const eventId = booking.event?._id ? booking.event._id : booking.event;
+  const event = eventId ? await eventRepo.findEventById(eventId) : null;
+  if (event && new Date(event.date) < new Date()) {
+    throw new ValidationError('Cannot cancel a booking for a past event.');
+  }
+
+  const seatIds = booking.seats.map((s) => s.seatId);
+  const session = await mongoose.startSession();
+
+  const refundId = `REF-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
+
+  try {
+    await session.withTransaction(async () => {
+      await bookingRepo.updateBookingById(
+        booking._id,
+        {
+          status: BOOKING_STATUS.CANCELLED,
+          paymentStatus: PAYMENT_STATUS.REFUNDED,
+          cancelledAt: new Date(),
+          cancellationReason: reason || null,
+          refund: {
+            refundId,
+            amount: booking.totalAmount,
+            refundedAt: new Date(),
+            status: 'completed',
+          },
+        },
+        session
+      );
+
+      const EventModel = (await import('../models/event.model.js')).default;
+      const bulkOps = seatIds.map((seatId) => ({
+        updateOne: {
+          filter: { _id: booking.event._id || booking.event, 'seatLayout.seats.seatId': seatId },
+          update: {
+            $set: {
+              'seatLayout.$[row].seats.$[seat].status': SEAT_STATUS.AVAILABLE,
+              'seatLayout.$[row].seats.$[seat].lockedBy': null,
+              'seatLayout.$[row].seats.$[seat].lockedAt': null,
+            },
+          },
+          arrayFilters: [
+            { 'row.seats': { $elemMatch: { seatId: { $in: seatIds } } } },
+            { 'seat.seatId': seatId },
+          ],
+        },
+      }));
+      await EventModel.bulkWrite(bulkOps, { session });
+
+      await EventModel.findByIdAndUpdate(
+        booking.event._id || booking.event,
+        { $inc: { availableSeats: seatIds.length } },
+        { session }
+      );
+    });
+
+    logger.info(`[Booking] Cancelled booking ${bookingId} (${seatIds.length} seat(s) released)`);
+  } finally {
+    await session.endSession();
+  }
+
+  // Record refund in Payment ledger
+  try {
+    const Payment = (await import('../models/payment.model.js')).default;
+    await Payment.findOneAndUpdate(
+      { booking: booking._id },
+      {
+        status: 'refunded',
+        refund: {
+          refundId,
+          amount: booking.totalAmount,
+          reason: reason || 'Booking cancelled by user',
+          refundedAt: new Date(),
+          status: 'completed',
+        },
+      }
+    );
+  } catch (err) {
+    logger.warn(`[Payment] Failed to update payment ledger during refund: ${err.message}`);
+  }
+
+  const userDoc = await import('../models/user.model.js').then((m) =>
+    m.default.findById(booking.user._id || booking.user).select('name email')
+  );
+  const eventDoc = await eventRepo.findEventById(booking.event._id || booking.event);
+
+  if (userDoc && eventDoc) {
+    await addEmailJob('booking_cancellation', {
+      to: userDoc.email,
+      name: userDoc.name,
+      event: {
+        title: eventDoc.title,
+        date: eventDoc.date,
+        time: eventDoc.time,
+        venue: eventDoc.venue,
+        city: eventDoc.city,
+      },
+      booking: {
+        bookingId,
+        seats: booking.seats,
+        totalAmount: booking.totalAmount,
+        cancellationReason: reason || null,
+        refundId,
+        refundAmount: booking.totalAmount,
+        refundStatus: 'completed',
+      },
+    });
+  }
+
+  // Dispatch in-app notification
+  try {
+    const { dispatchNotification } = await import('./notification.controller.js');
+    await dispatchNotification({
+      user: booking.user._id || booking.user,
+      type: 'booking_cancelled',
+      title: 'Booking Cancelled ❌',
+      message: `Your booking #${bookingId} for ${eventDoc?.title || 'Event'} has been cancelled. Refund of ₹${booking.totalAmount} has been initiated (Ref: ${refundId}).`,
+      link: '/my-bookings',
+      metadata: { bookingId, refundId },
+    });
+  } catch (err) {
+    logger.warn(`[Notification] Failed to dispatch cancellation notification: ${err.message}`);
+  }
+
+  return booking;
+};
+
+// ─── Controller Handlers ───────────────────────────────────────────────────────
+
 export const lockSeats = asyncHandler(async (req, res) => {
   const { eventId, seatIds } = req.body;
+  const userId = req.user._id;
 
-  const result = await bookingService.lockEventSeats(eventId, seatIds, req.user._id);
+  const event = await eventRepo.findEventById(eventId);
+  if (!event) throw new NotFoundError(MESSAGES.EVENT.NOT_FOUND);
+  if (event.status !== EVENT_STATUS.PUBLISHED) {
+    throw new ValidationError('This event is not available for booking.');
+  }
+  if (event.availableSeats < seatIds.length) {
+    throw new ConflictError(MESSAGES.BOOKING.SEAT_UNAVAILABLE);
+  }
+
+  resolveSeatDetails(event, seatIds);
+
+  const { success, failedSeat } = await acquireSeatLocks(eventId, seatIds, userId.toString());
+  if (!success) {
+    if (failedSeat) {
+      throw new ConflictError(
+        `Seat ${failedSeat} was just taken by another user. Please choose different seats.`
+      );
+    }
+    throw new ConflictError(MESSAGES.BOOKING.SEAT_UNAVAILABLE);
+  }
+
+  const seatUpdateOps = seatIds.map((seatId) => ({
+    updateOne: {
+      filter: { _id: event._id, 'seatLayout.seats.seatId': seatId },
+      update: {
+        $set: {
+          'seatLayout.$[row].seats.$[seat].status': SEAT_STATUS.LOCKED,
+          'seatLayout.$[row].seats.$[seat].lockedBy': userId,
+          'seatLayout.$[row].seats.$[seat].lockedAt': new Date(),
+        },
+      },
+      arrayFilters: [
+        { 'row.seats': { $elemMatch: { seatId: { $in: seatIds } } } },
+        { 'seat.seatId': seatId },
+      ],
+    },
+  }));
+
+  const Event = (await import('../models/event.model.js')).default;
+  await Event.bulkWrite(seatUpdateOps);
+
+  const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+  logger.info(`[Booking] ${seatIds.length} seat(s) locked for user ${userId} on event ${eventId}`);
+
+  const result = {
+    lockedSeats: seatIds,
+    expiresAt,
+    ttlSeconds: 600,
+  };
 
   return res
     .status(HTTP_STATUS.OK)
     .json(new ApiResponse(HTTP_STATUS.OK, MESSAGES.BOOKING.SEATS_LOCKED, result));
 });
 
-// ─── Step 2: Confirm Booking ──────────────────────────────────────────────────
-
-/**
- * @swagger
- * /bookings/confirm:
- *   post:
- *     tags: [Bookings]
- *     summary: Confirm booking for locked seats
- *     description: |
- *       Must be called after /lock-seats while locks are still valid.
- *       Creates the booking atomically using a Mongoose transaction.
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             required: [eventId, seatIds]
- *             properties:
- *               eventId:
- *                 type: string
- *               seatIds:
- *                 type: array
- *                 items:
- *                   type: string
- *     responses:
- *       201:
- *         description: Booking confirmed successfully
- *       409:
- *         description: Lock expired or double booking
- */
 export const confirmBooking = asyncHandler(async (req, res) => {
   const { eventId, seatIds } = req.body;
+  const userId = req.user._id;
 
-  const { booking, qrCode } = await bookingService.confirmBooking(
+  const alreadyBooked = await bookingRepo.userHasBookingForEvent(userId, eventId);
+  if (alreadyBooked) {
+    throw new ConflictError(MESSAGES.BOOKING.DOUBLE_BOOKING);
+  }
+
+  const { valid, expiredSeat } = await verifyLocks(eventId, seatIds, userId.toString());
+  if (!valid) {
+    throw new ConflictError(
+      expiredSeat
+        ? `Lock on seat ${expiredSeat} has expired. Please select seats again.`
+        : MESSAGES.BOOKING.SEATS_LOCK_EXPIRED
+    );
+  }
+
+  const event = await eventRepo.findEventById(eventId);
+  if (!event) throw new NotFoundError(MESSAGES.EVENT.NOT_FOUND);
+
+  const resolvedSeats = resolveSeatDetails(event, seatIds, userId);
+  const totalAmount = event.ticketPrice * seatIds.length;
+  const bookingId = generateBookingId();
+
+  const session = await mongoose.startSession();
+  let confirmedBooking;
+
+  try {
+    await session.withTransaction(async () => {
+      confirmedBooking = await bookingRepo.createBooking(
+        {
+          bookingId,
+          user: userId,
+          event: eventId,
+          seats: resolvedSeats,
+          ticketPriceAtBooking: event.ticketPrice,
+          totalAmount,
+          status: BOOKING_STATUS.CONFIRMED,
+          paymentStatus: 'paid',
+        },
+        session
+      );
+
+      const Event = (await import('../models/event.model.js')).default;
+      const bulkOps = seatIds.map((seatId) => ({
+        updateOne: {
+          filter: { _id: event._id, 'seatLayout.seats.seatId': seatId },
+          update: {
+            $set: {
+              'seatLayout.$[row].seats.$[seat].status': SEAT_STATUS.BOOKED,
+              'seatLayout.$[row].seats.$[seat].lockedBy': null,
+              'seatLayout.$[row].seats.$[seat].lockedAt': null,
+            },
+          },
+          arrayFilters: [
+            { 'row.seats': { $elemMatch: { seatId: { $in: seatIds } } } },
+            { 'seat.seatId': seatId },
+          ],
+        },
+      }));
+      await Event.bulkWrite(bulkOps, { session });
+
+      await Event.findByIdAndUpdate(
+        eventId,
+        { $inc: { availableSeats: -seatIds.length } },
+        { session }
+      );
+    });
+
+    logger.info(`[Booking] Confirmed booking ${bookingId} for user ${userId}`);
+  } finally {
+    await session.endSession();
+  }
+
+  await releaseSeats(eventId, seatIds, userId.toString());
+
+  // Record initial transaction in Payment ledger
+  try {
+    const Payment = (await import('../models/payment.model.js')).default;
+    const transactionId = `TXN-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
+    await Payment.create({
+      booking: confirmedBooking._id,
+      user: userId,
+      amount: totalAmount,
+      currency: 'INR',
+      paymentMethod: req.body.paymentMethod || 'mock',
+      status: 'successful',
+      transactionId,
+      gatewayResponse: {
+        gateway: 'MockPaymentGateway',
+        responseCode: 'SUCCESS',
+        paidAt: new Date().toISOString(),
+      },
+    });
+  } catch (err) {
+    logger.warn(`[Payment] Failed to create payment transaction record: ${err.message}`);
+  }
+
+  const qrCode = await generateQrCode({
+    bookingId,
+    userId,
     eventId,
-    seatIds,
-    req.user._id
+    seats: resolvedSeats,
+  });
+
+  await bookingRepo.updateBookingById(confirmedBooking._id, { qrCode });
+  confirmedBooking.qrCode = qrCode;
+
+  const userDoc = await import('../models/user.model.js').then((m) =>
+    m.default.findById(userId).select('name email')
   );
+
+  if (userDoc) {
+    await addEmailJob('booking_confirmation', {
+      to: userDoc.email,
+      name: userDoc.name,
+      event: {
+        title: event.title,
+        date: event.date,
+        time: event.time,
+        venue: event.venue,
+        city: event.city,
+      },
+      booking: {
+        bookingId: confirmedBooking.bookingId,
+        seats: confirmedBooking.seats,
+        totalAmount: confirmedBooking.totalAmount,
+      },
+      qrCode,
+    });
+  }
+
+  // Dispatch in-app notification
+  try {
+    const { dispatchNotification } = await import('./notification.controller.js');
+    await dispatchNotification({
+      user: userId,
+      type: 'booking_confirmed',
+      title: 'Booking Confirmed! 🎟️',
+      message: `Your booking #${confirmedBooking.bookingId} for "${event.title}" is confirmed. Seats: ${resolvedSeats.map((s) => s.seatId).join(', ')}.`,
+      link: '/my-bookings',
+      metadata: { bookingId: confirmedBooking.bookingId, eventId: event._id },
+    });
+  } catch (err) {
+    logger.warn(`[Notification] Failed to dispatch confirmation notification: ${err.message}`);
+  }
 
   return res
     .status(HTTP_STATUS.CREATED)
     .json(
-      new ApiResponse(HTTP_STATUS.CREATED, MESSAGES.BOOKING.CREATED, { booking, qrCode })
+      new ApiResponse(HTTP_STATUS.CREATED, MESSAGES.BOOKING.CREATED, { booking: confirmedBooking, qrCode })
     );
 });
 
-// ─── My Booking History ───────────────────────────────────────────────────────
-
-/**
- * @swagger
- * /bookings/my-bookings:
- *   get:
- *     tags: [Bookings]
- *     summary: Get the current user's booking history
- *     parameters:
- *       - $ref: '#/components/parameters/PageParam'
- *       - $ref: '#/components/parameters/LimitParam'
- *     responses:
- *       200:
- *         description: Bookings fetched successfully
- */
 export const getMyBookings = asyncHandler(async (req, res) => {
-  const { bookings, meta } = await bookingService.getMyBookings(req.user._id, req.query);
+  const { page, limit, skip, sortObj } = parsePaginationParams(req.query);
+  const { bookings, total } = await bookingRepo.findBookingsByUser(req.user._id, {
+    skip,
+    limit,
+    sortObj,
+  });
+  const meta = buildPaginationMeta(total, page, limit);
 
   return res
     .status(HTTP_STATUS.OK)
     .json(new ApiResponse(HTTP_STATUS.OK, MESSAGES.BOOKING.LIST_FETCHED, bookings, meta));
 });
 
-// ─── Single Booking Detail ────────────────────────────────────────────────────
-
-/**
- * @swagger
- * /bookings/{bookingId}:
- *   get:
- *     tags: [Bookings]
- *     summary: Get booking details by booking ID
- *     description: Returns booking details. Users can only view their own bookings.
- *     parameters:
- *       - name: bookingId
- *         in: path
- *         required: true
- *         schema:
- *           type: string
- *         example: TKT-20240715-X7K2M
- *     responses:
- *       200:
- *         description: Booking fetched successfully
- *       403:
- *         description: Cannot view another user's booking
- *       404:
- *         description: Booking not found
- */
 export const getBookingById = asyncHandler(async (req, res) => {
-  const booking = await bookingService.getBookingById(
-    req.params.bookingId,
-    req.user._id,
-    req.user.role
-  );
+  const booking = await bookingRepo.findBookingByBookingId(req.params.bookingId);
+
+  if (!booking) throw new NotFoundError(MESSAGES.BOOKING.NOT_FOUND);
+
+  if (req.user.role !== 'admin' && booking.user._id.toString() !== req.user._id.toString()) {
+    throw new AuthorizationError(MESSAGES.AUTH.FORBIDDEN);
+  }
 
   return res
     .status(HTTP_STATUS.OK)
     .json(new ApiResponse(HTTP_STATUS.OK, MESSAGES.BOOKING.FETCHED, booking));
 });
 
-// ─── Cancel Booking ───────────────────────────────────────────────────────────
-
-/**
- * @swagger
- * /bookings/{bookingId}/cancel:
- *   post:
- *     tags: [Bookings]
- *     summary: Cancel a booking and release seats
- *     parameters:
- *       - name: bookingId
- *         in: path
- *         required: true
- *         schema:
- *           type: string
- *     requestBody:
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             properties:
- *               reason:
- *                 type: string
- *     responses:
- *       200:
- *         description: Booking cancelled successfully
- *       400:
- *         description: Booking already cancelled or event has passed
- */
 export const cancelBooking = asyncHandler(async (req, res) => {
-  await bookingService.cancelBooking(
+  await cancelBookingCore(
     req.params.bookingId,
     req.user._id,
     req.user.role,
@@ -208,52 +474,18 @@ export const cancelBooking = asyncHandler(async (req, res) => {
     .json(new ApiResponse(HTTP_STATUS.OK, MESSAGES.BOOKING.CANCELLED));
 });
 
-// ─── Download PDF Ticket ───────────────────────────────────────────────────────
-
-/**
- * @swagger
- * /bookings/{bookingId}/ticket:
- *   get:
- *     tags: [Bookings]
- *     summary: Download PDF ticket for a confirmed booking
- *     description: |
- *       Streams a PDF ticket file with embedded QR code.
- *       The PDF is generated on-demand and returned as a download.
- *       Only the booking owner or an admin can download the ticket.
- *     parameters:
- *       - name: bookingId
- *         in: path
- *         required: true
- *         schema:
- *           type: string
- *         example: TKT-20240715-X7K2M
- *     responses:
- *       200:
- *         description: PDF file (application/pdf)
- *         headers:
- *           Content-Disposition:
- *             schema:
- *               type: string
- *               example: attachment; filename="ticket-TKT-20240715-X7K2M.pdf"
- *       403:
- *         description: Cannot download another user's ticket
- *       404:
- *         description: Booking not found
- */
 export const downloadTicketPdf = asyncHandler(async (req, res) => {
-  // 1. Fetch booking (ownership check built-in — throws 403 if not owner/admin)
-  const booking = await bookingService.getBookingById(
-    req.params.bookingId,
-    req.user._id,
-    req.user.role
-  );
+  const booking = await bookingRepo.findBookingByBookingId(req.params.bookingId);
+  if (!booking) throw new NotFoundError(MESSAGES.BOOKING.NOT_FOUND);
 
-  // 2. Set PDF response headers
+  if (req.user.role !== 'admin' && booking.user._id.toString() !== req.user._id.toString()) {
+    throw new AuthorizationError(MESSAGES.AUTH.FORBIDDEN);
+  }
+
   const filename = `ticket-${booking.bookingId}.pdf`;
   res.setHeader('Content-Type', 'application/pdf');
   res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
 
-  // 3. Stream PDF directly to response — no temp file needed
   await generatePdfTicket({
     event: booking.event,
     booking,
@@ -261,6 +493,4 @@ export const downloadTicketPdf = asyncHandler(async (req, res) => {
     qrCode: booking.qrCode || null,
     stream: res,
   });
-  // generatePdfTicket calls doc.end() which closes the response stream
 });
-

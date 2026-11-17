@@ -56,8 +56,9 @@ export const bookingCancellationEmail = (name, event, booking) => {
                   text-transform:uppercase;letter-spacing:1px;">Refund Amount</p>
         <p style="margin:0;font-size:18px;font-weight:700;color:#374151;">
           ₹${booking.totalAmount.toLocaleString('en-IN')}
-          <span style="font-size:12px;font-weight:400;color:#6b7280;">(processing 5–7 business days)</span>
+          <span style="font-size:12px;font-weight:400;color:#6b7280;">(${booking.refundStatus || 'processing 5–7 business days'})</span>
         </p>
+        ${booking.refundId ? `<p style="margin:4px 0 0;font-size:12px;font-family:monospace;color:#6b7280;">Refund ID: <strong>${booking.refundId}</strong></p>` : ''}
       </div>
       ${booking.cancellationReason ? `
       <div style="padding:14px 20px;border-top:1px solid #e5e7eb;">
