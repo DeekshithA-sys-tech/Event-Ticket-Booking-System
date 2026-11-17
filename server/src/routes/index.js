@@ -14,6 +14,9 @@ import searchRouter from './search.routes.js';      // Sprint 7
 import reviewRouter from './review.routes.js';      // Sprint 8
 import analyticsRouter from './analytics.routes.js'; // Sprint 9
 import adminRouter from './admin.routes.js';         // Sprint 11
+import paymentRouter from './payment.routes.js';     // Payments & Refunds
+import notificationRouter from './notification.routes.js'; // In-app Notifications
+import aiRouter from './ai.routes.js'; // Agentic AI microservice forwarder
 
 const router = Router();
 
@@ -49,6 +52,15 @@ router.use('/analytics', analyticsRouter);
 
 // ── Sprint 11: Admin Dashboard & Platform Management ───────────────
 router.use('/admin', adminRouter);
+
+// ── Payments & Refund Transactions ────────────────────────────────
+router.use('/payments', paymentRouter);
+
+// ── In-App Notifications ──────────────────────────────────────────
+router.use('/notifications', notificationRouter);
+
+// ── Agentic AI Layer (Python ai-service forwarder) ────────────────
+router.use('/ai', aiRouter);
 
 export default router;
 
