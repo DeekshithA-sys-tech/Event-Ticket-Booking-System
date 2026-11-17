@@ -6,6 +6,7 @@
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { ApiResponse } from '../utils/ApiResponse.js';
 import { HTTP_STATUS } from '../constants/httpStatus.js';
+import { logger } from '../utils/logger.js';
 
 const AI_SERVICE_URL = process.env.AI_SERVICE_URL || 'http://localhost:8000';
 
@@ -57,10 +58,17 @@ export const chatWithAI = asyncHandler(async (req, res) => {
 
     if (!aiResponse.ok) {
       const errText = await aiResponse.text();
-      return res.status(aiResponse.status).json({
-        success: false,
-        message: `AI Service responded with status ${aiResponse.status}: ${errText}`,
-      });
+      logger.warn(`[AI Controller] AI Service responded with status ${aiResponse.status}: ${errText}`);
+
+      return res.status(HTTP_STATUS.OK).json(
+        new ApiResponse(HTTP_STATUS.OK, 'AI assistant response generated.', {
+          conversation_id,
+          message: '🤖 I encountered a momentary issue processing your request. Please try rephrasing or asking again.',
+          requires_confirmation: false,
+          pending_action: null,
+          tool_calls_used: [],
+        })
+      );
     }
 
     const data = await aiResponse.json();
@@ -68,6 +76,7 @@ export const chatWithAI = asyncHandler(async (req, res) => {
       .status(HTTP_STATUS.OK)
       .json(new ApiResponse(HTTP_STATUS.OK, 'AI response generated successfully.', data));
   } catch (error) {
+    logger.warn(`[AI Controller] Failed to connect to AI service: ${error.message}`);
     return res.status(HTTP_STATUS.SERVICE_UNAVAILABLE).json({
       success: false,
       message: `Failed to connect to AI microservice at ${AI_SERVICE_URL}. Please ensure ai-service is running.`,
