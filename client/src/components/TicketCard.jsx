@@ -119,19 +119,19 @@ export const TicketCard = ({ booking, onCancel }) => {
       </div>
 
       {/* Footer Actions */}
-      <div className="pt-4 border-t border-slate-100 flex items-center justify-between">
-        <div>
-          <span className="text-[10px] text-slate-400 block">Total Amount</span>
-          <span className="text-base font-bold text-slate-900">
+      <div className="pt-4 border-t border-slate-100 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+        <div className="flex items-center justify-between sm:justify-start sm:block">
+          <span className="text-[10px] text-slate-400">Total Amount: </span>
+          <span className="text-base font-bold text-slate-900 ml-1 sm:ml-0 sm:block">
             ₹{booking.totalAmount?.toLocaleString('en-IN')}
           </span>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center justify-end gap-2.5">
           {isConfirmed && onCancel && (
             <button
               onClick={() => onCancel(booking.bookingId)}
-              className="px-3.5 py-2 rounded-xl text-xs font-semibold text-rose-600 hover:bg-rose-50 transition-colors"
+              className="flex-1 sm:flex-initial px-3.5 py-2 rounded-xl text-xs font-semibold text-rose-600 hover:bg-rose-50 border border-transparent hover:border-rose-200 transition-colors text-center"
             >
               Cancel Booking
             </button>
@@ -141,10 +141,10 @@ export const TicketCard = ({ booking, onCancel }) => {
             <button
               disabled={downloading}
               onClick={handleDownloadPdf}
-              className="flex items-center gap-2 px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold shadow-md shadow-indigo-600/20 transition-all hover:scale-[1.02]"
+              className="flex-1 sm:flex-initial flex items-center justify-center gap-2 px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold shadow-md shadow-indigo-600/20 transition-all hover:scale-[1.01]"
             >
-              <FiDownload className="w-4 h-4" />
-              {downloading ? 'Generating PDF...' : 'Download Ticket PDF'}
+              <FiDownload className="w-4 h-4 shrink-0" />
+              <span>{downloading ? 'Generating PDF...' : 'Download Ticket PDF'}</span>
             </button>
           )}
         </div>
