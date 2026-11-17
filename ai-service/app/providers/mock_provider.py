@@ -260,12 +260,52 @@ class MockProvider(BaseAIProvider):
             for b in bookings[:5]:
                 ev_title = b.get("event", {}).get("title", "Event") if isinstance(b.get("event"), dict) else "Event"
                 status = b.get("status", "CONFIRMED").upper()
-                seats = ", ".join(b.get("seats", [])) if isinstance(b.get("seats"), list) else str(b.get("seats", ""))
+                raw_seats = b.get("seats", [])
+                if isinstance(raw_seats, list):
+                    seat_labels = []
+                    for s in raw_seats:
+                        if isinstance(s, dict):
+                            seat_labels.append(s.get("seatId") or f"{s.get('row', '')}-{s.get('seatNumber', '')}")
+                        else:
+                            seat_labels.append(str(s))
+                    seats = ", ".join(seat_labels) if seat_labels else "N/A"
+                else:
+                    seats = str(raw_seats)
+
                 total = b.get("totalAmount", b.get("amount", "N/A"))
-                b_id = b.get("_id", "")
+                b_id = b.get("bookingId") or b.get("_id", "")
                 lines.append(f"- **{ev_title}** [{status}]\n  - Seats: `{seats}` | Total: ₹{total} | ID: `{b_id}`")
 
             return {"content": "\n".join(lines), "tool_calls": []}
+
+        elif tool_name == "cancel_booking":
+            if isinstance(data, dict) and (data.get("success") or data.get("statusCode") in [200, 201]):
+                msg = data.get("message", "Booking cancelled successfully.")
+                return {
+                    "content": f"✅ **Booking Cancelled Successfully!**\n\n{msg}\n\nYour refund has been initiated and the released seats are now available again.",
+                    "tool_calls": [],
+                }
+            else:
+                err = data.get("message") if isinstance(data, dict) else str(data)
+                return {
+                    "content": f"⚠️ **Could not cancel booking**: {err}",
+                    "tool_calls": [],
+                }
+
+        elif tool_name == "create_booking":
+            if isinstance(data, dict) and (data.get("success") or data.get("statusCode") in [200, 201]):
+                b_info = data.get("data", {}).get("booking", {}) if isinstance(data.get("data"), dict) else {}
+                b_id = b_info.get("bookingId") or b_info.get("_id", "Confirmed")
+                return {
+                    "content": f"🎉 **Booking Confirmed!**\n\nYour reservation **#{b_id}** is complete. A confirmation email and PDF ticket pass have been generated.",
+                    "tool_calls": [],
+                }
+            else:
+                err = data.get("message") if isinstance(data, dict) else str(data)
+                return {
+                    "content": f"⚠️ **Could not complete booking**: {err}",
+                    "tool_calls": [],
+                }
 
         elif tool_name == "get_organizer_analytics":
             overview = data.get("data") if isinstance(data, dict) and "data" in data else data
@@ -273,10 +313,11 @@ class MockProvider(BaseAIProvider):
                 revenue = overview.get("totalRevenue", overview.get("revenue", 0))
                 tickets = overview.get("totalTicketsSold", overview.get("ticketsSold", 0))
                 events_count = overview.get("totalEvents", overview.get("activeEvents", 0))
+                rev_str = f"₹{revenue:,.2f}" if isinstance(revenue, (int, float)) else f"₹{revenue}"
                 return {
                     "content": (
                         f"### 📊 Organizer Dashboard Overview\n\n"
-                        f"- 💰 **Total Revenue**: ₹{revenue:,.2f} if isinstance({revenue}, (int, float)) else f'₹{revenue}'\n"
+                        f"- 💰 **Total Revenue**: {rev_str}\n"
                         f"- 🎟️ **Tickets Sold**: {tickets}\n"
                         f"- 🎪 **Total Events**: {events_count}\n"
                     ),
