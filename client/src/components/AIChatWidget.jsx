@@ -77,10 +77,21 @@ export const AIChatWidget = () => {
 
       setMessages((prev) => [...prev, assistantMessage]);
     } catch (err) {
+      let rawMsg = err.response?.data?.message || err.message || '';
+      let cleanMsg = '🤖 I encountered a momentary issue processing your request. Please try asking again or rephrasing.';
+      if (
+        rawMsg &&
+        !rawMsg.includes('500') &&
+        !rawMsg.includes('{"detail"') &&
+        !rawMsg.includes('sequence item') &&
+        !rawMsg.includes('AI Service responded')
+      ) {
+        cleanMsg = `⚠️ ${rawMsg}`;
+      }
       const errorMessage = {
         id: `err_${Date.now()}`,
         role: 'assistant',
-        content: `⚠️ ${err.response?.data?.message || err.message || 'Could not connect to AI service. Please try again.'}`,
+        content: cleanMsg,
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       };
       setMessages((prev) => [...prev, errorMessage]);
@@ -173,20 +184,20 @@ export const AIChatWidget = () => {
       {!isOpen && (
         <button
           onClick={() => setIsOpen(true)}
-          className="fixed bottom-6 right-6 z-50 flex items-center gap-2.5 px-4 py-3 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white rounded-full shadow-xl hover:shadow-2xl transition-all duration-300 transform hover:-translate-y-0.5 focus:outline-none focus:ring-4 focus:ring-indigo-300 dark:focus:ring-indigo-800"
+          className="fixed bottom-4 right-4 sm:bottom-6 sm:right-6 z-50 flex items-center gap-2 px-3.5 py-2.5 sm:px-4 sm:py-3 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white rounded-full shadow-xl hover:shadow-2xl transition-all duration-300 transform hover:-translate-y-0.5 focus:outline-none focus:ring-4 focus:ring-indigo-300 dark:focus:ring-indigo-800"
           title="Open AI Assistant"
         >
           <div className="relative">
-            <FaRobot className="w-5 h-5" />
+            <FaRobot className="w-4 h-4 sm:w-5 sm:h-5" />
             <span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-emerald-400 rounded-full border-2 border-white dark:border-slate-900 animate-pulse" />
           </div>
-          <span className="text-sm font-semibold tracking-wide">Ask AI</span>
+          <span className="text-xs sm:text-sm font-semibold tracking-wide">Ask AI</span>
         </button>
       )}
 
       {/* Floating Chat Drawer */}
       {isOpen && (
-        <div className="fixed bottom-6 right-6 z-50 w-96 max-w-[calc(100vw-2rem)] h-[560px] max-h-[calc(100vh-5rem)] flex flex-col bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 overflow-hidden animate-in fade-in slide-in-from-bottom-4 duration-200">
+        <div className="fixed bottom-3 right-3 sm:bottom-6 sm:right-6 z-50 w-[calc(100vw-1.5rem)] sm:w-96 h-[500px] sm:h-[560px] max-h-[calc(100dvh-4.5rem)] flex flex-col bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 overflow-hidden animate-in fade-in slide-in-from-bottom-4 duration-200">
           {/* Header */}
           <div className="flex items-center justify-between px-4 py-3 bg-gradient-to-r from-indigo-600 to-purple-600 text-white shadow">
             <div className="flex items-center gap-2.5">
