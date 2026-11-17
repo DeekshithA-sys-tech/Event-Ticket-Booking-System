@@ -1,9 +1,12 @@
 import { useState, useEffect } from 'react';
+import { useDispatch } from 'react-redux';
 import { bookingService } from '../services/bookingService.js';
+import { resetBookingState } from '../store/bookingSlice.js';
 import { TicketCard } from '../components/TicketCard.jsx';
 import toast from 'react-hot-toast';
 
 export const MyBookingsPage = () => {
+  const dispatch = useDispatch();
   const [bookings, setBookings] = useState([]);
   const [loading, setLoading] = useState(true);
   const [filterStatus, setFilterStatus] = useState('all');
@@ -32,6 +35,7 @@ export const MyBookingsPage = () => {
     try {
       await bookingService.cancelBooking(bookingId, 'Cancelled by customer');
       toast.success('Booking cancelled successfully.');
+      dispatch(resetBookingState());
       fetchBookings();
     } catch (_err) {
       // Handled by toast
