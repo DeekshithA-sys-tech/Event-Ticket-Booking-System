@@ -296,6 +296,23 @@ export const EventDetailPage = () => {
         </div>
       </div>
 
+      {/* Mobile Sticky Reservation CTA Bar */}
+      <div className="lg:hidden fixed bottom-0 left-0 right-0 p-3 sm:p-4 bg-white/95 backdrop-blur-md border-t border-slate-200 z-40 shadow-lg flex items-center justify-between gap-4">
+        <div>
+          <span className="text-[10px] text-slate-400 block">From</span>
+          <p className="text-base sm:text-lg font-bold text-slate-900">
+            ₹{event.ticketPrice?.toLocaleString('en-IN')}
+          </p>
+        </div>
+        <button
+          onClick={handleSelectSeats}
+          className="flex-1 max-w-xs py-2.5 sm:py-3 px-4 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 text-white text-xs sm:text-sm font-bold shadow-md shadow-indigo-600/30 flex items-center justify-center gap-1.5"
+        >
+          <HiTicket className="w-4 h-4" />
+          <span>Select Seats</span>
+        </button>
+      </div>
+
       {/* Write Review Modal */}
       {reviewModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
