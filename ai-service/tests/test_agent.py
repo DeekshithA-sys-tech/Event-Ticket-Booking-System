@@ -197,3 +197,42 @@ async def test_rbac_organizer_accesses_analytics():
         assert "Organizer Dashboard Overview" in data["message"]
         assert len(data["tool_calls_used"]) > 0
         assert data["tool_calls_used"][0]["name"] == "get_organizer_analytics"
+
+
+@pytest.mark.asyncio
+async def test_get_my_bookings_with_dict_seats():
+    """Verify get_my_bookings formats safely when seats are list of subdocument dicts."""
+    mock_bookings = [
+        {
+            "_id": "60d5ec49f1b24c1d88b42002",
+            "bookingId": "TKT-20261117-ABC12",
+            "event": {"title": "Neon Cyber Symphony 2026"},
+            "status": "confirmed",
+            "seats": [
+                {"seatId": "A-3", "row": "A", "seatNumber": 3},
+                {"seatId": "A-4", "row": "A", "seatNumber": 4},
+            ],
+            "totalAmount": 3000,
+        }
+    ]
+
+    with patch("app.utils.http_client.express_client.get", new_callable=AsyncMock) as mock_get:
+        mock_get.return_value = {
+            "success": True,
+            "data": mock_bookings,
+        }
+
+        req = {
+            "conversation_id": "test-my-bookings-dict-seats",
+            "message": "Show my bookings",
+            "user": {"role": "customer"},
+            "auth_token": "mock-jwt-token",
+        }
+        response = client.post("/api/chat", json=req)
+        assert response.status_code == 200
+        data = response.json()
+        assert "Your Bookings" in data["message"]
+        assert "Neon Cyber Symphony 2026" in data["message"]
+        assert "A-3, A-4" in data["message"]
+        assert "TKT-20261117-ABC12" in data["message"]
+
