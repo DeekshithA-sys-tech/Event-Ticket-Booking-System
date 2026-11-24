@@ -72,7 +72,10 @@ const resolveSeatDetails = (event, seatIds, userId = null) => {
  * Core atomic booking cancellation logic (reusable by Admin force-cancellations).
  */
 export const cancelBookingCore = async (bookingId, userId, userRole, reason) => {
-  const booking = await bookingRepo.findBookingByBookingId(bookingId);
+  let booking = await bookingRepo.findBookingByBookingId(bookingId);
+  if (!booking && mongoose.isValidObjectId(bookingId)) {
+    booking = await bookingRepo.findBookingById(bookingId);
+  }
 
   if (!booking) throw new NotFoundError(MESSAGES.BOOKING.NOT_FOUND);
 
@@ -82,7 +85,17 @@ export const cancelBookingCore = async (bookingId, userId, userRole, reason) => 
     ? booking.user.toString()
     : null;
 
-  if (userRole !== 'admin' && bookingUserId !== userId.toString()) {
+  const eventOrganizerId = booking.event?.organizer?._id
+    ? booking.event.organizer._id.toString()
+    : booking.event?.organizer
+    ? booking.event.organizer.toString()
+    : null;
+
+  const isOwner = bookingUserId && bookingUserId === userId.toString();
+  const isEventOrganizer = eventOrganizerId && eventOrganizerId === userId.toString();
+  const isAdmin = userRole === 'admin';
+
+  if (!isAdmin && !isEventOrganizer && !isOwner) {
     throw new AuthorizationError(MESSAGES.AUTH.FORBIDDEN);
   }
 
@@ -485,11 +498,30 @@ export const getMyBookings = asyncHandler(async (req, res) => {
 });
 
 export const getBookingById = asyncHandler(async (req, res) => {
-  const booking = await bookingRepo.findBookingByBookingId(req.params.bookingId);
+  let booking = await bookingRepo.findBookingByBookingId(req.params.bookingId);
+  if (!booking && mongoose.isValidObjectId(req.params.bookingId)) {
+    booking = await bookingRepo.findBookingById(req.params.bookingId);
+  }
 
   if (!booking) throw new NotFoundError(MESSAGES.BOOKING.NOT_FOUND);
 
-  if (req.user.role !== 'admin' && booking.user._id.toString() !== req.user._id.toString()) {
+  const bookingUserId = booking.user?._id
+    ? booking.user._id.toString()
+    : booking.user
+    ? booking.user.toString()
+    : null;
+
+  const eventOrganizerId = booking.event?.organizer?._id
+    ? booking.event.organizer._id.toString()
+    : booking.event?.organizer
+    ? booking.event.organizer.toString()
+    : null;
+
+  const isOwner = bookingUserId && bookingUserId === req.user._id.toString();
+  const isEventOrganizer = eventOrganizerId && eventOrganizerId === req.user._id.toString();
+  const isAdmin = req.user.role === 'admin';
+
+  if (!isAdmin && !isEventOrganizer && !isOwner) {
     throw new AuthorizationError(MESSAGES.AUTH.FORBIDDEN);
   }
 
@@ -512,10 +544,30 @@ export const cancelBooking = asyncHandler(async (req, res) => {
 });
 
 export const downloadTicketPdf = asyncHandler(async (req, res) => {
-  const booking = await bookingRepo.findBookingByBookingId(req.params.bookingId);
+  let booking = await bookingRepo.findBookingByBookingId(req.params.bookingId);
+  if (!booking && mongoose.isValidObjectId(req.params.bookingId)) {
+    booking = await bookingRepo.findBookingById(req.params.bookingId);
+  }
+
   if (!booking) throw new NotFoundError(MESSAGES.BOOKING.NOT_FOUND);
 
-  if (req.user.role !== 'admin' && booking.user._id.toString() !== req.user._id.toString()) {
+  const bookingUserId = booking.user?._id
+    ? booking.user._id.toString()
+    : booking.user
+    ? booking.user.toString()
+    : null;
+
+  const eventOrganizerId = booking.event?.organizer?._id
+    ? booking.event.organizer._id.toString()
+    : booking.event?.organizer
+    ? booking.event.organizer.toString()
+    : null;
+
+  const isOwner = bookingUserId && bookingUserId === req.user._id.toString();
+  const isEventOrganizer = eventOrganizerId && eventOrganizerId === req.user._id.toString();
+  const isAdmin = req.user.role === 'admin';
+
+  if (!isAdmin && !isEventOrganizer && !isOwner) {
     throw new AuthorizationError(MESSAGES.AUTH.FORBIDDEN);
   }
 
