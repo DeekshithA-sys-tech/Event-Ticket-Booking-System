@@ -203,7 +203,7 @@ export const createEvent = asyncHandler(async (req, res) => {
     seatLayout: layout,
     totalSeats,
     availableSeats: totalSeats,
-    status: EVENT_STATUS.DRAFT,
+    status: eventData.status || EVENT_STATUS.PUBLISHED,
   });
 
   logger.info(`Event created: "${event.title}" by organizer ${organizerId}`);
