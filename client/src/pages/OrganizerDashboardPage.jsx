@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { analyticsService } from '../services/analyticsService.js';
 import { eventService } from '../services/eventService.js';
-import { FiPlus, FiDollarSign, FiCalendar, FiUsers, FiTrendingUp, FiTrash2, FiEdit, FiImage, FiUploadCloud } from 'react-icons/fi';
+import { FiPlus, FiDollarSign, FiCalendar, FiUsers, FiTrendingUp, FiTrash2, FiEdit, FiImage, FiUploadCloud, FiX } from 'react-icons/fi';
 import toast from 'react-hot-toast';
 
 const BUILTIN_CATEGORIES = [
@@ -44,6 +45,48 @@ export const OrganizerDashboardPage = () => {
     totalSeats: 200,
   });
 
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  // Keep create modal open when ?create=true is in the URL (initial navigation & query updates)
+  useEffect(() => {
+    if (searchParams.get('create') === 'true') {
+      setCreateModalOpen(true);
+    }
+  }, [searchParams]);
+
+  const handleOpenCreateModal = () => {
+    setFormData({
+      title: '',
+      description: '',
+      category: categories[0]?._id || '',
+      venue: '',
+      city: '',
+      date: '',
+      time: '19:00',
+      ticketPrice: 1500,
+      totalSeats: 200,
+    });
+    setUseCustomCategory(false);
+    setCustomCategoryName('');
+    setCreateModalOpen(true);
+    const nextParams = new URLSearchParams(searchParams);
+    nextParams.set('create', 'true');
+    setSearchParams(nextParams, { replace: true });
+  };
+
+  const handleCloseCreateModal = () => {
+    setCreateModalOpen(false);
+    setUseCustomCategory(false);
+    setCustomCategoryName('');
+    setBannerFile(null);
+    setBannerPreview(null);
+    if (searchParams.get('create') === 'true') {
+      const nextParams = new URLSearchParams(searchParams);
+      nextParams.delete('create');
+      setSearchParams(nextParams, { replace: true });
+    }
+  };
+
   const handleBannerChange = (e) => {
     const file = e.target.files?.[0];
     if (file) {
@@ -62,7 +105,10 @@ export const OrganizerDashboardPage = () => {
       ]);
 
       setOverview(overviewRes?.data || {});
-      setEvents(eventsRes?.data || []);
+      const rawEvents = Array.isArray(eventsRes?.data)
+        ? eventsRes.data
+        : (eventsRes?.data?.events || eventsRes?.events || []);
+      setEvents(rawEvents);
 
       if (categoriesRes?.data && categoriesRes.data.length > 0) {
         setCategories(categoriesRes.data);
@@ -103,11 +149,7 @@ export const OrganizerDashboardPage = () => {
       }
 
       toast.success('Event submitted with banner! Pending admin approval before publishing.', { duration: 5000 });
-      setCreateModalOpen(false);
-      setCustomCategoryName('');
-      setUseCustomCategory(false);
-      setBannerFile(null);
-      setBannerPreview(null);
+      handleCloseCreateModal();
       setFormData({
         title: '',
         description: '',
@@ -212,22 +254,7 @@ export const OrganizerDashboardPage = () => {
         </div>
 
         <button
-          onClick={() => {
-            setFormData({
-              title: '',
-              description: '',
-              category: categories[0]?._id || '',
-              venue: '',
-              city: '',
-              date: '',
-              time: '19:00',
-              ticketPrice: 1500,
-              totalSeats: 200,
-            });
-            setUseCustomCategory(false);
-            setCustomCategoryName('');
-            setCreateModalOpen(true);
-          }}
+          onClick={handleOpenCreateModal}
           className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white text-xs font-bold shadow-md shadow-indigo-600/20 transition-all hover:scale-[1.02]"
         >
           <FiPlus className="w-4 h-4" /> Create New Event
@@ -298,8 +325,19 @@ export const OrganizerDashboardPage = () => {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {events.map((ev) => (
-                <tr key={ev._id} className="hover:bg-slate-50/80 transition-colors">
+              {events.length === 0 ? (
+                <tr>
+                  <td colSpan="6" className="px-4 py-12 text-center text-slate-400">
+                    <FiCalendar className="w-10 h-10 mx-auto mb-2 text-slate-300" />
+                    <p className="font-semibold text-slate-600">No managed events found</p>
+                    <p className="text-xs text-slate-400 mt-1">
+                      Click "+ Create New Event" above to create and publish your first event.
+                    </p>
+                  </td>
+                </tr>
+              ) : (
+                events.map((ev) => (
+                  <tr key={ev._id} className="hover:bg-slate-50/80 transition-colors">
                   <td className="px-4 py-3 font-semibold text-slate-900">{ev.title}</td>
                   <td className="px-4 py-3 text-slate-500">
                     {new Date(ev.date).toLocaleDateString()} {ev.time}
@@ -340,7 +378,7 @@ export const OrganizerDashboardPage = () => {
                     </div>
                   </td>
                 </tr>
-              ))}
+              )))}
             </tbody>
           </table>
         </div>
@@ -350,7 +388,17 @@ export const OrganizerDashboardPage = () => {
       {createModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
           <div className="bg-white p-6 sm:p-8 rounded-3xl border border-slate-200 shadow-2xl max-w-lg w-full space-y-6 max-h-[90vh] overflow-y-auto">
-            <h3 className="text-lg font-bold text-slate-900">Create New Event</h3>
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+              <h3 className="text-lg font-bold text-slate-900">Create New Event</h3>
+              <button
+                type="button"
+                onClick={handleCloseCreateModal}
+                className="p-1.5 rounded-xl text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors"
+                title="Close"
+              >
+                <FiX className="w-5 h-5" />
+              </button>
+            </div>
 
             <form onSubmit={handleCreateEvent} className="space-y-4 text-xs">
               <div>
@@ -558,11 +606,7 @@ export const OrganizerDashboardPage = () => {
               <div className="flex items-center justify-end gap-3 pt-4">
                 <button
                   type="button"
-                  onClick={() => {
-                    setCreateModalOpen(false);
-                    setBannerFile(null);
-                    setBannerPreview(null);
-                  }}
+                  onClick={handleCloseCreateModal}
                   className="px-4 py-2 rounded-xl text-slate-600 hover:text-slate-900"
                 >
                   Cancel
