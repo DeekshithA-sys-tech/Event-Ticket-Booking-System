@@ -1,10 +1,12 @@
 import { useState, useRef, useEffect } from 'react';
 import { useSelector } from 'react-redux';
+import { useNavigate } from 'react-router-dom';
 import { FiMessageSquare, FiX, FiSend, FiCheck, FiAlertTriangle, FiMinimize2 } from 'react-icons/fi';
 import { FaRobot, FaTicketAlt, FaSearch } from 'react-icons/fa';
 import { api } from '../services/api.js';
 
 export const AIChatWidget = () => {
+  const navigate = useNavigate();
   const { user } = useSelector((state) => state.auth || {});
   const [isOpen, setIsOpen] = useState(false);
   const [messages, setMessages] = useState([
@@ -64,14 +66,18 @@ export const AIChatWidget = () => {
       });
 
       const aiData = res?.data || res;
+      const dataPayload = aiData?.data || aiData;
 
       const assistantMessage = {
         id: `ai_${Date.now()}`,
         role: 'assistant',
-        content: aiData.message || 'I processed your request.',
-        requires_confirmation: aiData.requires_confirmation,
-        pending_action: aiData.pending_action,
-        tool_calls_used: aiData.tool_calls_used || [],
+        content: dataPayload.message || 'I processed your request.',
+        requires_confirmation: dataPayload.requires_confirmation,
+        pending_action: dataPayload.pending_action,
+        tool_calls_used: dataPayload.tool_calls_used || [],
+        citations: dataPayload.citations || [],
+        is_rag_grounded: dataPayload.is_rag_grounded || false,
+        event_cards: dataPayload.event_cards || [],
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       };
 
@@ -128,8 +134,9 @@ export const AIChatWidget = () => {
   };
 
   const promptChips = [
-    { label: '🎭 Find Comedy Shows', query: 'Find upcoming comedy shows in Bangalore' },
-    { label: '🎸 Music Concerts', query: 'Show me music concerts happening soon' },
+    { label: '💰 Refund Policy', query: 'Can I get a refund if I cancel 2 days before?' },
+    { label: '🎒 Bag & Entry Rules', query: 'What bag size and items are permitted in the venue?' },
+    { label: '🎭 Find Events', query: 'Find upcoming music concerts in Bangalore' },
     { label: '🎫 My Bookings', query: 'Show my bookings' },
   ];
 
@@ -145,13 +152,13 @@ export const AIChatWidget = () => {
       // Bold
       formatted = formatted.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
       // Inline code
-      formatted = formatted.replace(/`([^`]+)`/g, '<code class="px-1 py-0.5 bg-slate-200 dark:bg-slate-700 rounded text-xs font-mono">$1</code>');
+      formatted = formatted.replace(/`([^`]+)`/g, '<code class="px-1 py-0.5 bg-slate-200 dark:bg-slate-700 rounded text-xs font-mono break-all [overflow-wrap:anywhere]">$1</code>');
 
       if (line.trim().startsWith('- ') || line.trim().startsWith('* ')) {
         return (
           <li
             key={idx}
-            className="ml-4 list-disc text-xs leading-relaxed"
+            className="ml-4 list-disc text-xs leading-relaxed break-words [overflow-wrap:anywhere]"
             dangerouslySetInnerHTML={{ __html: formatted.replace(/^[-*]\s*/, '') }}
           />
         );
@@ -160,7 +167,7 @@ export const AIChatWidget = () => {
         return (
           <h4
             key={idx}
-            className="font-bold text-sm mt-2 mb-1"
+            className="font-bold text-sm mt-2 mb-1 break-words [overflow-wrap:anywhere]"
             dangerouslySetInnerHTML={{ __html: formatted.replace(/^###\s*/, '') }}
           />
         );
@@ -171,7 +178,7 @@ export const AIChatWidget = () => {
       return (
         <p
           key={idx}
-          className="text-xs leading-relaxed"
+          className="text-xs leading-relaxed break-words [overflow-wrap:anywhere]"
           dangerouslySetInnerHTML={{ __html: formatted }}
         />
       );
@@ -249,10 +256,10 @@ export const AIChatWidget = () => {
             {messages.map((m) => (
               <div
                 key={m.id}
-                className={`flex flex-col ${m.role === 'user' ? 'items-end' : 'items-start'}`}
+                className={`flex flex-col max-w-full ${m.role === 'user' ? 'items-end' : 'items-start'}`}
               >
                 <div
-                  className={`max-w-[85%] rounded-2xl px-3.5 py-2.5 text-xs shadow-xs ${
+                  className={`max-w-[85%] rounded-2xl px-3.5 py-2.5 text-xs shadow-xs break-words [overflow-wrap:anywhere] overflow-hidden ${
                     m.role === 'user'
                       ? 'bg-gradient-to-r from-indigo-600 to-purple-600 text-white rounded-br-none'
                       : 'bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200 border border-slate-200 dark:border-slate-700/80 rounded-bl-none'
@@ -260,14 +267,65 @@ export const AIChatWidget = () => {
                 >
                   {renderFormattedText(m.content)}
 
+                  {/* Grounded Citation Chips */}
+                  {m.citations && m.citations.length > 0 && (
+                    <div className="mt-2.5 pt-2 border-t border-slate-100 dark:border-slate-700/60">
+                      <span className="text-[10px] text-slate-400 dark:text-slate-500 font-semibold block mb-1">
+                        Sources & References:
+                      </span>
+                      <div className="flex flex-wrap gap-1.5">
+                        {m.citations.map((cite) => (
+                          <span
+                            key={cite.citation_id}
+                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-mono bg-indigo-50 dark:bg-indigo-950/50 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800/80 cursor-help"
+                            title={cite.excerpt}
+                          >
+                            <span className="font-bold">[{cite.citation_id}]</span>
+                            <span>{cite.title}</span>
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Interactive Event Cards */}
+                  {m.event_cards && m.event_cards.length > 0 && (
+                    <div className="mt-3 space-y-2">
+                      {m.event_cards.map((ev) => (
+                        <div
+                          key={ev.event_id}
+                          className="p-2.5 bg-slate-50 dark:bg-slate-700/40 rounded-xl border border-slate-200 dark:border-slate-600/70 flex items-center justify-between gap-2"
+                        >
+                          <div className="min-w-0 flex-1">
+                            <p className="font-bold text-xs text-slate-900 dark:text-slate-100 truncate">
+                              {ev.title}
+                            </p>
+                            <p className="text-[10px] text-slate-500 dark:text-slate-400">
+                              {ev.city} • ₹{ev.price} • {ev.available_seats} seats left
+                            </p>
+                          </div>
+                          <button
+                            onClick={() => {
+                              setIsOpen(false);
+                              navigate(`/events/${ev.event_id}/select-seats`);
+                            }}
+                            className="px-2.5 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-[10px] shrink-0 transition-colors shadow-xs"
+                          >
+                            Select Seats
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
                   {/* Two-Phase Confirmation Dialog inside message */}
                   {m.requires_confirmation && m.pending_action && (
-                    <div className="mt-3 p-3 bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-700/60 rounded-xl text-amber-900 dark:text-amber-200">
+                    <div className="mt-3 p-3 bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-700/60 rounded-xl text-amber-900 dark:text-amber-200 break-words [overflow-wrap:anywhere]">
                       <div className="flex items-center gap-1.5 font-semibold text-xs mb-1.5">
                         <FiAlertTriangle className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400 shrink-0" />
                         <span>Action Confirmation Required</span>
                       </div>
-                      <p className="text-[11px] mb-2.5 leading-relaxed text-amber-800 dark:text-amber-300">
+                      <p className="text-[11px] mb-2.5 leading-relaxed text-amber-800 dark:text-amber-300 break-words [overflow-wrap:anywhere]">
                         {m.pending_action.summary}
                       </p>
                       <div className="flex items-center gap-2">
