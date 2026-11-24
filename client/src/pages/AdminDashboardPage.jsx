@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { adminService } from '../services/adminService.js';
 import { eventService } from '../services/eventService.js';
 import {
@@ -23,6 +24,26 @@ export const AdminDashboardPage = () => {
   const [auditLogs, setAuditLogs] = useState([]);
   const [health, setHealth] = useState(null);
   const [loading, setLoading] = useState(true);
+
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  useEffect(() => {
+    const tabParam = searchParams.get('tab');
+    if (tabParam) {
+      if (tabParam === 'events' || tabParam === 'events_approval') {
+        setActiveTab('events_approval');
+      } else if (['overview', 'pending', 'users', 'audit'].includes(tabParam)) {
+        setActiveTab(tabParam);
+      }
+    }
+  }, [searchParams]);
+
+  const handleTabChange = (tab) => {
+    setActiveTab(tab);
+    const next = new URLSearchParams(searchParams);
+    next.set('tab', tab === 'events_approval' ? 'events' : tab);
+    setSearchParams(next, { replace: true });
+  };
 
   const fetchAdminData = async () => {
     try {
@@ -154,7 +175,7 @@ export const AdminDashboardPage = () => {
         {/* Tab Navigation */}
         <div className="flex flex-wrap items-center gap-2 p-1 rounded-xl bg-white border border-slate-200 text-xs shadow-sm">
           <button
-            onClick={() => setActiveTab('overview')}
+            onClick={() => handleTabChange('overview')}
             className={`px-3 py-1.5 rounded-lg font-semibold transition-all ${
               activeTab === 'overview'
                 ? 'bg-purple-600 text-white shadow-sm'
@@ -164,7 +185,7 @@ export const AdminDashboardPage = () => {
             Overview
           </button>
           <button
-            onClick={() => setActiveTab('events_approval')}
+            onClick={() => handleTabChange('events_approval')}
             className={`px-3 py-1.5 rounded-lg font-semibold transition-all flex items-center gap-1.5 ${
               activeTab === 'events_approval'
                 ? 'bg-purple-600 text-white shadow-sm'
@@ -179,7 +200,7 @@ export const AdminDashboardPage = () => {
             )}
           </button>
           <button
-            onClick={() => setActiveTab('pending')}
+            onClick={() => handleTabChange('pending')}
             className={`px-3 py-1.5 rounded-lg font-semibold transition-all flex items-center gap-1.5 ${
               activeTab === 'pending'
                 ? 'bg-purple-600 text-white shadow-sm'
@@ -190,7 +211,7 @@ export const AdminDashboardPage = () => {
             Organizers ({pendingOrganizers.length} Pending)
           </button>
           <button
-            onClick={() => setActiveTab('users')}
+            onClick={() => handleTabChange('users')}
             className={`px-3 py-1.5 rounded-lg font-semibold transition-all ${
               activeTab === 'users'
                 ? 'bg-purple-600 text-white shadow-sm'
@@ -200,7 +221,7 @@ export const AdminDashboardPage = () => {
             User Directory ({users.length})
           </button>
           <button
-            onClick={() => setActiveTab('audit')}
+            onClick={() => handleTabChange('audit')}
             className={`px-3 py-1.5 rounded-lg font-semibold transition-all ${
               activeTab === 'audit'
                 ? 'bg-purple-600 text-white shadow-sm'
