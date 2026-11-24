@@ -323,7 +323,7 @@ class AgentOrchestrator:
             role=role,
         )
 
-        answer_text, citations = self.generator.synthesize_rag_response(user_msg, retrieved_chunks)
+        answer_text, citations = await self.generator.synthesize_rag_response(user_msg, retrieved_chunks)
 
         return ChatResponse(
             conversation_id=req.conversation_id,
