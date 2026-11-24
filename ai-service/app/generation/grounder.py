@@ -24,8 +24,12 @@ class GroundedGenerator:
         """
         if not retrieved_chunks:
             msg = (
-                "I could not find specific information about that in the official EventPulse records. "
-                "Would you like to explore upcoming events or connect with customer support?"
+                f"I could not find specific documentation about **'{question}'** in our official EventPulse records.\n\n"
+                f"You can ask about:\n"
+                f"- 🎟️ **Ticketing Policies:** 10-minute seat holds, transaction limits, and QR passes\n"
+                f"- 📋 **Cancellations & Refunds:** Refund percentages, transfer policies, and deadlines\n"
+                f"- 🏛️ **Venue Guidelines:** Entry requirements, accessibility, and prohibited items\n"
+                f"- 🔍 **Live Events:** Finding upcoming concerts, comedy shows, and theater performances"
             )
             return msg, []
 
@@ -54,6 +58,8 @@ class GroundedGenerator:
 
         # Local deterministic synthesis
         response_text = self._extractive_grounding(question, retrieved_chunks)
+        if "I could not find specific documentation answering" in response_text:
+            return response_text, []
         return response_text, citations
 
     def _extractive_grounding(
@@ -140,10 +146,29 @@ class GroundedGenerator:
             lines.append(f"\n*City: {city} | Venue: {venue} | Ticket Price: ₹{price}* [1]")
             return "\n\n".join(lines)
 
-        # General multi-chunk answer composition
+        # Check content term overlap before general multi-chunk answer composition
+        q_words = set(re.findall(r"\b[a-zA-Z]{3,}\b", q_lower)) - {
+            "what", "where", "when", "how", "can", "the", "and", "for", "with", "about", "are", "you", "does", "this", "that", "tell"
+        }
+        matching_chunks = []
+        for idx, (chunk, score) in enumerate(retrieved_chunks):
+            chunk_words = set(re.findall(r"\b[a-zA-Z]{3,}\b", chunk.full_content.lower()))
+            overlap = q_words & chunk_words
+            if overlap:
+                matching_chunks.append((chunk, idx + 1, overlap))
+
+        if not matching_chunks:
+            return (
+                f"I could not find specific documentation answering '{question}'.\n\n"
+                f"You can ask about:\n"
+                f"- 🎟️ **Ticketing Policies:** 10-minute hold lock, seat limits, and digital QR passes\n"
+                f"- 📋 **Cancellations & Refunds:** Refund percentages, transfer policies, and deadlines\n"
+                f"- 🏛️ **Venue Guidelines:** Entry requirements, accessibility, and prohibited items\n"
+                f"- 🎪 **Live Events:** Finding upcoming concerts, comedy shows, and theater performances"
+            )
+
         composed_lines = ["Based on the official EventPulse documentation:"]
-        for idx, (chunk, _) in enumerate(retrieved_chunks[:3]):
-            cite_num = idx + 1
+        for chunk, cite_num, _ in matching_chunks[:3]:
             title = chunk.metadata.get("title", "Document")
             sec = chunk.metadata.get("section", "")
             header = f"{title} ({sec})" if sec else title
