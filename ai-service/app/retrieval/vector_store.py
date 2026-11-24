@@ -60,7 +60,7 @@ class DenseVectorIndex:
         self.vectors = matrix
 
     def search(
-        self, query: str, top_k: int = 10, filters: Dict = None
+        self, query: str, top_k: int = 10, filters: Dict = None, min_similarity: float = 0.12
     ) -> List[Tuple[TextChunk, float]]:
         if self.vectors.shape[0] == 0 or not query.strip():
             return []
@@ -71,6 +71,8 @@ class DenseVectorIndex:
 
         results: List[Tuple[TextChunk, float]] = []
         for idx, score in enumerate(sims):
+            if float(score) < min_similarity:
+                continue
             chunk = self.chunks[idx]
 
             # Apply metadata filters if provided
