@@ -282,3 +282,30 @@ def test_unrelated_query_gracefully_refused_no_hallucinated_citations():
     assert data["is_rag_grounded"] is False
     assert len(data["citations"]) == 0
 
+
+@pytest.mark.asyncio
+async def test_llm_client_with_gemini():
+    """Verify LLM client formats and triggers Gemini API when GEMINI_API_KEY is configured."""
+    from app.generation.llm_client import LLMClient
+    from unittest.mock import MagicMock
+
+    with patch.dict("os.environ", {"GEMINI_API_KEY": "fake-gemini-key"}):
+        llm = LLMClient()
+        assert llm.is_available() is True
+
+        with patch("google.genai.Client") as mock_genai_cls:
+            mock_client = MagicMock()
+            mock_genai_cls.return_value = mock_client
+            mock_response = MagicMock()
+            mock_response.text = "You can cancel up to 24 hours in advance [1] for an 80% refund [2]."
+            mock_client.models.generate_content.return_value = mock_response
+
+            result = await llm.generate_grounded_response(
+                question="Can I cancel?",
+                context_text="[1] (Refund Policy): Cancel up to 24 hours prior.",
+            )
+            assert result is not None
+            assert "[1]" in result
+            assert "80%" in result
+
+
