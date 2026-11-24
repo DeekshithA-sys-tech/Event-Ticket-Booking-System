@@ -59,6 +59,142 @@ class AgentOrchestrator:
                 requires_confirmation=False,
             )
 
+        # ── 2b. Handle User Profile / Account Details Query ────────────────────
+        is_user_details_query = any(
+            p in user_msg.lower()
+            for p in [
+                "user details", "get user details", "my details", "my profile",
+                "who am i", "account details", "my account", "user info", "profile details"
+            ]
+        )
+        if is_user_details_query:
+            if token and user_ctx.email:
+                role_label = user_ctx.role.capitalize()
+                return ChatResponse(
+                    conversation_id=req.conversation_id,
+                    message=(
+                        f"### 👤 User Account Details\n\n"
+                        f"- **User ID:** `{user_ctx.user_id}`\n"
+                        f"- **Email Address:** `{user_ctx.email}`\n"
+                        f"- **Role:** `{role_label}`\n"
+                        f"- **Status:** Active & Verified\n\n"
+                        f"💡 *You can view your active bookings by asking 'show my bookings' or manage your profile in the app header.*"
+                    ),
+                    citations=[],
+                    is_rag_grounded=False,
+                    requires_confirmation=False,
+                )
+            else:
+                return ChatResponse(
+                    conversation_id=req.conversation_id,
+                    message=(
+                        "### 👤 User Account\n\n"
+                        "You are currently browsing as a **Guest** (unauthenticated).\n\n"
+                        "Please sign in or register to view your account profile, manage tickets, or make bookings."
+                    ),
+                    citations=[],
+                    is_rag_grounded=False,
+                    requires_confirmation=False,
+                )
+
+        # ── 2c. Handle Event Creation Intent ───────────────────────────────────
+        is_create_event_query = (
+            any(p in user_msg.lower() for p in ["create event", "create an event", "add event", "host an event", "new event", "schedule an event"])
+            or (user_msg.lower().startswith("create ") and any(k in user_msg.lower() for k in ["show", "tickets", "price", "seats", "comedy", "music"]))
+        )
+        if is_create_event_query:
+            if role not in ["organizer", "admin"]:
+                return ChatResponse(
+                    conversation_id=req.conversation_id,
+                    message=(
+                        "🔒 **Organizer Permission Required**\n\n"
+                        "Creating events is restricted to registered **Event Organizers** and **Administrators**.\n\n"
+                        "If you are an organizer, please log in with your organizer account to host and publish events."
+                    ),
+                    citations=[],
+                    is_rag_grounded=False,
+                    requires_confirmation=False,
+                )
+
+            # Extract event title
+            title_match = re.search(r'["\']([^"\']+)["\']', user_msg)
+            if title_match:
+                title = title_match.group(1).title()
+            else:
+                called_match = re.search(r'called\s+([A-Za-z0-9_-]+)', user_msg, re.IGNORECASE)
+                title = called_match.group(1).title() if called_match else "Laugh"
+
+            # Extract category
+            category = "Comedy"
+            for cat_candidate in ["comedy", "music", "concert", "sports", "theater", "conference", "festival", "tech"]:
+                if cat_candidate in user_msg.lower():
+                    category = cat_candidate.title()
+                    break
+
+            # Extract city
+            city = "Bangalore"
+            for c_candidate in ["bangalore", "banglore", "bengaluru", "mumbai", "delhi", "mysuru", "mysore", "hyderabad", "chennai", "pune", "goa", "kolkata"]:
+                if c_candidate in user_msg.lower():
+                    if c_candidate in ["bangalore", "banglore", "bengaluru"]:
+                        city = "Bangalore"
+                    elif c_candidate in ["mysuru", "mysore"]:
+                        city = "Mysuru"
+                    else:
+                        city = c_candidate.title()
+                    break
+
+            # Extract total seats / tickets
+            seats_match = re.search(r'(\d+)\s*(?:tickets|seats)', user_msg, re.IGNORECASE)
+            total_seats = int(seats_match.group(1)) if seats_match else 250
+
+            # Extract ticket price
+            price_match = re.search(r'(?:price\s*(?:is|of)?\s*|₹\s*|rs\.?\s*)(\d+)', user_msg, re.IGNORECASE)
+            if not price_match:
+                price_match = re.search(r'(\d+)\s*(?:rupees|inr|rs)', user_msg, re.IGNORECASE)
+            ticket_price = float(price_match.group(1)) if price_match else 200.0
+
+            from datetime import datetime, timedelta
+            event_date = (datetime.now() + timedelta(days=14)).strftime("%Y-%m-%d")
+            venue = f"EventPulse Arena, {city}"
+
+            event_payload = {
+                "title": f"{title} {category} Show" if category.lower() not in title.lower() else title,
+                "description": f"Live {title} {category.lower()} show featuring premier artists in {city}.",
+                "category": category,
+                "city": city,
+                "venue": venue,
+                "ticketPrice": ticket_price,
+                "totalSeats": total_seats,
+                "date": event_date,
+                "time": "19:00",
+                "duration": 120,
+                "status": "published",
+            }
+
+            pending = PendingAction(
+                action="create_event",
+                payload=event_payload,
+                summary=tool_registry.build_confirmation_summary("create_event", event_payload),
+                requires_confirmation=True,
+            )
+
+            return ChatResponse(
+                conversation_id=req.conversation_id,
+                message=(
+                    f"🎪 **Please Review and Confirm New Event Details:**\n\n"
+                    f"- **Event Title:** {event_payload['title']}\n"
+                    f"- **Category:** {category}\n"
+                    f"- **City:** {city}\n"
+                    f"- **Venue:** {venue}\n"
+                    f"- **Seat Capacity:** {total_seats} tickets\n"
+                    f"- **Ticket Price:** ₹{ticket_price:.2f}\n"
+                    f"- **Date & Time:** {event_date} at 19:00\n\n"
+                    f"Click **Confirm** below to create and publish this event to the live catalog."
+                ),
+                requires_confirmation=True,
+                pending_action=pending,
+            )
+
         # ── 3. Handle Role-Based Analytics Query ───────────────────────────────
         if any(w in user_msg.lower() for w in ["analytics", "revenue", "sales overview", "dashboard metrics"]):
             if role not in ["organizer", "admin"]:
@@ -249,6 +385,33 @@ class AgentOrchestrator:
                 return ChatResponse(
                     conversation_id=conv_id,
                     message=f"⚠️ **Could not complete booking**: {err}",
+                    requires_confirmation=False,
+                )
+
+        elif action == "create_event":
+            res = await tool_registry.execute("create_event", payload, token=token, user=user)
+            if res.get("success") or res.get("statusCode") in [200, 201]:
+                ev_data = res.get("data", {})
+                ev_title = ev_data.get("title", payload.get("title", "Event"))
+                ev_id = ev_data.get("_id", "")
+                return ChatResponse(
+                    conversation_id=conv_id,
+                    message=(
+                        f"🎉 **Event Created Successfully!**\n\n"
+                        f"Your event **{ev_title}** has been published to the EventPulse catalog.\n"
+                        f"- **Event ID:** `{ev_id}`\n"
+                        f"- **Tickets Available:** {payload.get('totalSeats')}\n"
+                        f"- **Ticket Price:** ₹{payload.get('ticketPrice')}\n\n"
+                        f"Attendees can now discover it and reserve seats!"
+                    ),
+                    requires_confirmation=False,
+                    tool_calls_used=[{"name": "create_event", "arguments": payload}],
+                )
+            else:
+                err = res.get("message") or res.get("error") or "Unknown error"
+                return ChatResponse(
+                    conversation_id=conv_id,
+                    message=f"⚠️ **Could not create event**: {err}",
                     requires_confirmation=False,
                 )
 
