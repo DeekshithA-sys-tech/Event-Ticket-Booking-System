@@ -24,6 +24,14 @@ class Settings(BaseSettings):
     SIMILARITY_THRESHOLD: float = 0.20
     BM25_WEIGHT: float = 0.5
     VECTOR_WEIGHT: float = 0.5
+    EMBEDDING_MODEL: str = os.getenv("EMBEDDING_MODEL", "all-MiniLM-L6-v2")
+
+    # Free LLM API Providers (Google Gemini & Groq)
+    GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
+    GROQ_API_KEY: str = os.getenv("GROQ_API_KEY", "")
+    LLM_PROVIDER: str = os.getenv("LLM_PROVIDER", "auto")
+    GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+    GROQ_MODEL: str = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
 
     # CORS
     CORS_ORIGINS: List[str] = [
