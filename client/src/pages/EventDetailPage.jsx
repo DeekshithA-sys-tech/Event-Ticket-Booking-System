@@ -57,6 +57,11 @@ export const EventDetailPage = () => {
   }, [id]);
 
   const handleSelectSeats = () => {
+    if (!isAuthenticated) {
+      toast.error('Please log in to select seats and book tickets.');
+      navigate('/login', { state: { from: `/events/${id}/select-seats` } });
+      return;
+    }
     if (event) {
       dispatch(setActiveEvent(event));
       navigate(`/events/${id}/select-seats`);
