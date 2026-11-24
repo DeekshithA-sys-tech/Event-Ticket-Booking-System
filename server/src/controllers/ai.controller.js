@@ -84,3 +84,42 @@ export const chatWithAI = asyncHandler(async (req, res) => {
     });
   }
 });
+
+export const queryRAG = asyncHandler(async (req, res) => {
+  const { question, top_k = 3 } = req.body;
+  if (!question || typeof question !== 'string' || !question.trim()) {
+    return res.status(HTTP_STATUS.BAD_REQUEST).json({
+      success: false,
+      message: 'Question is required.',
+    });
+  }
+
+  try {
+    const aiResponse = await fetch(`${AI_SERVICE_URL.replace(/\/$/, '')}/api/rag/query`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ question: question.trim(), top_k }),
+    });
+
+    if (!aiResponse.ok) {
+      const errText = await aiResponse.text();
+      return res.status(aiResponse.status).json({
+        success: false,
+        message: `RAG service error: ${errText}`,
+      });
+    }
+
+    const data = await aiResponse.json();
+    return res
+      .status(HTTP_STATUS.OK)
+      .json(new ApiResponse(HTTP_STATUS.OK, 'RAG query completed successfully.', data));
+  } catch (error) {
+    logger.warn(`[AI Controller] Failed to connect to AI RAG service: ${error.message}`);
+    return res.status(HTTP_STATUS.SERVICE_UNAVAILABLE).json({
+      success: false,
+      message: `Failed to connect to AI microservice at ${AI_SERVICE_URL}.`,
+      error: error.message,
+    });
+  }
+});
+
