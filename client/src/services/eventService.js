@@ -5,6 +5,8 @@
 
 import { api } from './api.js';
 
+let cachedCategories = null;
+
 export const eventService = {
   /**
    * Fetches paginated event list.
@@ -59,9 +61,24 @@ export const eventService = {
   },
 
   /**
-   * Fetches categories list.
+   * Fetches events created by the logged-in organizer.
+   * @param {object} params
+   */
+  async getMyEvents(params = {}) {
+    return api.get('/events/organizer/my-events', { params });
+  },
+
+  /**
+   * Fetches categories list with in-memory caching to eliminate duplicate API requests.
    */
   async getCategories() {
-    return api.get('/categories');
+    if (cachedCategories && cachedCategories.length > 0) {
+      return { success: true, data: cachedCategories };
+    }
+    const res = await api.get('/categories');
+    if (res?.data && Array.isArray(res.data) && res.data.length > 0) {
+      cachedCategories = res.data;
+    }
+    return res;
   },
 };
