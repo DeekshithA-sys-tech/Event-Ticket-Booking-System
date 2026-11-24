@@ -28,6 +28,13 @@ export const SeatSelectionPage = () => {
   const [locking, setLocking] = useState(false);
 
   useEffect(() => {
+    if (!isAuthenticated) {
+      toast.error('Please log in to select seats and book tickets.');
+      navigate('/login', { state: { from: `/events/${id}/select-seats` }, replace: true });
+    }
+  }, [isAuthenticated, id, navigate]);
+
+  useEffect(() => {
     const fetchEventAndSeats = async () => {
       try {
         setLoading(true);
