@@ -13,13 +13,15 @@ class GroundedGenerator:
     Ensures 0 cost, 0 hallucinations, and strict citations [1], [2].
     """
 
-    def synthesize_rag_response(
+    async def synthesize_rag_response(
         self,
         question: str,
         retrieved_chunks: List[Tuple[TextChunk, float]],
     ) -> Tuple[str, List[Citation]]:
         """
         Synthesizes a citation-backed response from retrieved chunks.
+        If an LLM provider (Gemini / Groq) is configured, calls the LLM with context.
+        Otherwise, falls back to deterministic zero-cost extractive grounding.
         If no chunks exceed relevance threshold, returns a graceful refusal.
         """
         if not retrieved_chunks:
@@ -56,7 +58,18 @@ class GroundedGenerator:
 
             context_parts.append(f"[{cite_num}] ({title} - {section}):\n{chunk.text}")
 
-        # Local deterministic synthesis
+        # If free LLM API key (Gemini / Groq) is available, synthesize with the model
+        try:
+            from app.generation.llm_client import llm_client
+            if llm_client.is_available():
+                context_text = "\n\n".join(context_parts)
+                llm_response = await llm_client.generate_grounded_response(question, context_text)
+                if llm_response:
+                    return llm_response, citations
+        except Exception as e:
+            logger.warning(f"[Grounder] LLM generation error: {e}. Falling back to extractive synthesis.")
+
+        # Deterministic extractive synthesis fallback
         response_text = self._extractive_grounding(question, retrieved_chunks)
         if "I could not find specific documentation answering" in response_text:
             return response_text, []
