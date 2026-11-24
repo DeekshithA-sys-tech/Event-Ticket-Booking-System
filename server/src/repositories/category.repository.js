@@ -28,7 +28,13 @@ export const findCategoryById = async (id) => {
  * @returns {Promise<Document|null>}
  */
 export const findCategoryBySlug = async (slug) => {
-  return Category.findOne({ slug, isActive: true }).exec();
+  if (!slug) return null;
+  const clean = slug.toLowerCase().trim();
+  const exact = await Category.findOne({ slug: clean, isActive: true }).exec();
+  if (exact) return exact;
+
+  // Fallback to substring matching for category aliases (e.g. "theater" matching "arts-theater")
+  return Category.findOne({ slug: new RegExp(clean, 'i'), isActive: true }).exec();
 };
 
 /**
