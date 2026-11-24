@@ -62,13 +62,18 @@ export const Footer = () => {
                 </Link>
               </li>
               <li>
-                <Link to="/events?category=theater" className="hover:text-indigo-600 transition-colors">
-                  Theater & Performing Arts
+                <Link to="/events?category=arts-theater" className="hover:text-indigo-600 transition-colors">
+                  Arts, Theater & Performances
                 </Link>
               </li>
               <li>
                 <Link to="/events?category=comedy" className="hover:text-indigo-600 transition-colors">
                   Standup Comedy Shows
+                </Link>
+              </li>
+              <li>
+                <Link to="/events?category=workshops" className="hover:text-indigo-600 transition-colors">
+                  Workshops & Masterclasses
                 </Link>
               </li>
             </ul>
@@ -97,14 +102,7 @@ export const Footer = () => {
         {/* Copyright Footer */}
         <div className="pt-8 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-slate-500">
           <p>© {new Date().getFullYear()} EventPulse Ticketing Platform. All rights reserved.</p>
-          <div className="flex items-center gap-6">
-            <span className="flex items-center gap-1.5">
-              <FiShield className="w-3.5 h-3.5 text-indigo-600" /> 256-Bit SSL Encrypted
-            </span>
-            <span className="flex items-center gap-1.5">
-              <FiGlobe className="w-3.5 h-3.5 text-indigo-600" /> Global Node Cluster
-            </span>
-          </div>
+          
         </div>
       </div>
     </footer>
