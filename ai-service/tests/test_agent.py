@@ -309,3 +309,72 @@ async def test_llm_client_with_gemini():
             assert "80%" in result
 
 
+@pytest.mark.asyncio
+async def test_admin_list_users_tool_dispatch():
+    mock_users_data = {
+        "users": [
+            {"name": "Admin User", "email": "admin@eventpulse.com", "role": "admin", "isActive": True},
+            {"name": "Regular User", "email": "customer@eventpulse.com", "role": "customer", "isActive": True},
+        ],
+        "total": 2,
+    }
+
+    with patch("app.agent.http_client.express_client.get", new_callable=AsyncMock) as mock_get:
+        mock_get.return_value = {
+            "success": True,
+            "data": mock_users_data,
+        }
+
+        req = {
+            "conversation_id": "test-list-users",
+            "message": "list all the users",
+            "user": {"role": "admin", "is_authenticated": True, "email": "admin@eventpulse.com"},
+            "auth_token": "admin-jwt-token",
+        }
+        response = client.post("/api/chat", json=req)
+        assert response.status_code == 200
+        data = response.json()
+        assert "Registered Platform Users" in data["message"]
+        assert "admin@eventpulse.com" in data["message"]
+
+
+def test_admin_list_users_forbidden_for_customer():
+    req = {
+        "conversation_id": "test-list-users-customer",
+        "message": "list all the users",
+        "user": {"role": "customer", "is_authenticated": True, "email": "customer@eventpulse.com"},
+    }
+    response = client.post("/api/chat", json=req)
+    assert response.status_code == 200
+    data = response.json()
+    assert "Admin Permission Required" in data["message"]
+
+
+def test_user_role_intent_handling():
+    req = {
+        "conversation_id": "test-role-intent",
+        "message": "am i admin or costumer or organiser ?",
+        "user": {"role": "admin", "email": "admin@eventpulse.com", "is_authenticated": True},
+        "auth_token": "valid-token",
+    }
+    response = client.post("/api/chat", json=req)
+    assert response.status_code == 200
+    data = response.json()
+    assert "Admin" in data["message"]
+    assert "Active & Verified" in data["message"]
+
+
+def test_golden_dataset_query_intent():
+    req = {
+        "conversation_id": "test-golden-dataset",
+        "message": "list all the golden dataset",
+        "user": {"role": "customer"},
+    }
+    response = client.post("/api/chat", json=req)
+    assert response.status_code == 200
+    data = response.json()
+    assert "Golden Evaluation Benchmark" in data["message"]
+    assert "eval_pol_01" in data["message"]
+
+
+
