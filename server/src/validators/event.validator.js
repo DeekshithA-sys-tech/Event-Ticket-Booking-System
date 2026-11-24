@@ -69,6 +69,13 @@ export const createEventSchema = z.object({
     ticketPrice: z
       .number({ required_error: 'Ticket price is required' })
       .min(0, 'Price cannot be negative'),
+    totalSeats: z
+      .number()
+      .int()
+      .positive('Total seats must be a positive integer')
+      .max(10000)
+      .optional(),
+    status: z.enum(['published', 'draft', 'cancelled']).optional(),
     seatLayout: z
       .array(rowInputSchema)
       .min(1, 'Seat layout must have at least 1 row')
