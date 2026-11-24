@@ -25,13 +25,20 @@ export const AppRoutes = () => {
         <Route index element={<HomePage />} />
         <Route path="events" element={<EventsListPage />} />
         <Route path="events/:id" element={<EventDetailPage />} />
-        <Route path="events/:id/select-seats" element={<SeatSelectionPage />} />
         <Route path="search" element={<SearchPage />} />
         <Route path="login" element={<LoginPage />} />
         <Route path="register" element={<RegisterPage />} />
         <Route path="verify-email" element={<VerifyEmailPage />} />
 
         {/* Customer Protected Routes */}
+        <Route
+          path="events/:id/select-seats"
+          element={
+            <ProtectedRoute>
+              <SeatSelectionPage />
+            </ProtectedRoute>
+          }
+        />
         <Route
           path="checkout"
           element={
