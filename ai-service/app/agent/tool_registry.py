@@ -123,6 +123,27 @@ class ToolRegistry:
             )
         )
 
+        # 8. Create Event (Write - Organizer/Admin)
+        self.register(
+            ToolDefinition(
+                name="create_event",
+                description="Create and publish a new event with seat layout, pricing, and venue details.",
+                parameters={
+                    "title": "Event title",
+                    "description": "Event description",
+                    "category": "Category name or ID (e.g. Comedy, Music, Theater)",
+                    "city": "City name (e.g. Bangalore, Mumbai)",
+                    "venue": "Venue name",
+                    "ticketPrice": "Ticket price in INR",
+                    "totalSeats": "Total seat capacity",
+                    "date": "Event date in YYYY-MM-DD format",
+                    "time": "Event time in HH:MM format",
+                },
+                required_role="organizer",
+                is_write_action=True,
+            )
+        )
+
     def register(self, tool_def: ToolDefinition):
         self.tools[tool_def.name] = tool_def
 
@@ -166,6 +187,14 @@ class ToolRegistry:
                 f"Please confirm cancellation of booking #{b_id}. "
                 f"Seats will be released immediately and a refund will be processed per platform policy."
             )
+
+        elif tool_name == "create_event":
+            t = payload.get("title", "Event")
+            c = payload.get("city", "")
+            p = payload.get("ticketPrice", "")
+            s = payload.get("totalSeats", "")
+            cat = payload.get("category", "")
+            return f"Please confirm creating event '{t}' ({cat}) in {c} with {s} seats at ₹{p}."
 
         return f"Please confirm action: {tool_name} with parameters: {payload}"
 
@@ -244,6 +273,23 @@ class ToolRegistry:
             return await express_client.post(
                 f"/bookings/{booking_id}/cancel", body={"reason": reason}, token=token
             )
+
+        # 8. Create Event (Write)
+        elif tool_name == "create_event":
+            body = {
+                "title": arguments.get("title", "Live Event"),
+                "description": arguments.get("description") or f"{arguments.get('title')} live event",
+                "category": arguments.get("category", "Comedy"),
+                "city": arguments.get("city", "Bangalore"),
+                "venue": arguments.get("venue", "EventPulse Arena"),
+                "ticketPrice": float(arguments.get("ticketPrice", 200)),
+                "totalSeats": int(arguments.get("totalSeats", 50)),
+                "date": arguments.get("date", "2026-12-01"),
+                "time": arguments.get("time", "19:00"),
+                "duration": int(arguments.get("duration", 120)),
+                "status": "published",
+            }
+            return await express_client.post("/events", body=body, token=token)
 
         return {"success": False, "error": f"Unhandled tool: {tool_name}"}
 
