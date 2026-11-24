@@ -187,3 +187,98 @@ async def test_rbac_permits_organizer_analytics():
         data = response.json()
         assert "Organizer Dashboard Overview" in data["message"]
         assert "240,000.00" in data["message"]
+
+
+def test_user_details_query_authenticated():
+    """Verify authenticated user asking for details receives their account profile."""
+    req = {
+        "conversation_id": "test-user-details",
+        "message": "get the user details",
+        "user": {
+            "user_id": "usr_123456",
+            "email": "organizer@eventpulse.com",
+            "role": "organizer",
+            "is_authenticated": True,
+        },
+        "auth_token": "valid-jwt-token",
+    }
+    response = client.post("/api/chat", json=req)
+    assert response.status_code == 200
+    data = response.json()
+    assert "User Account Details" in data["message"]
+    assert "organizer@eventpulse.com" in data["message"]
+    assert "Organizer" in data["message"]
+    assert data["is_rag_grounded"] is False
+
+
+def test_user_details_query_guest():
+    """Verify unauthenticated guest asking for details is prompted to sign in."""
+    req = {
+        "conversation_id": "test-user-guest",
+        "message": "who am i and get user details",
+        "user": {"role": "customer", "is_authenticated": False},
+    }
+    response = client.post("/api/chat", json=req)
+    assert response.status_code == 200
+    data = response.json()
+    assert "Guest" in data["message"]
+    assert "Please sign in" in data["message"]
+    assert data["is_rag_grounded"] is False
+
+
+def test_create_event_denied_for_customer():
+    """Verify customer role is told organizer permissions are required to create events."""
+    req = {
+        "conversation_id": "test-create-event-customer",
+        "message": 'create an event called "laugh" comedy show in banglore with 250 tickets each ticket price is 200',
+        "user": {"role": "customer"},
+    }
+    response = client.post("/api/chat", json=req)
+    assert response.status_code == 200
+    data = response.json()
+    assert "Organizer Permission Required" in data["message"]
+    assert data["requires_confirmation"] is False
+
+
+def test_create_event_organizer_prepares_confirmation():
+    """Verify organizer role asking to create event prepares PendingAction with parsed slots."""
+    req = {
+        "conversation_id": "test-create-event-organizer",
+        "message": 'create an event called "laugh" comedy show in banglore with 250 tickets each ticket price is 200',
+        "user": {
+            "user_id": "usr_org999",
+            "email": "comedy@bangalore.org",
+            "role": "organizer",
+            "is_authenticated": True,
+        },
+        "auth_token": "valid-organizer-jwt",
+    }
+    response = client.post("/api/chat", json=req)
+    assert response.status_code == 200
+    data = response.json()
+    assert data["requires_confirmation"] is True
+    assert data["pending_action"] is not None
+    assert data["pending_action"]["action"] == "create_event"
+
+    payload = data["pending_action"]["payload"]
+    assert "Laugh" in payload["title"]
+    assert payload["category"] == "Comedy"
+    assert payload["city"] == "Bangalore"
+    assert payload["totalSeats"] == 250
+    assert payload["ticketPrice"] == 200.0
+
+
+def test_unrelated_query_gracefully_refused_no_hallucinated_citations():
+    """Verify completely out-of-scope query refuses gracefully without dumping random policy chunks."""
+    req = {
+        "conversation_id": "test-unrelated",
+        "message": "how do I bake a chocolate cake?",
+        "user": {"role": "customer"},
+    }
+    response = client.post("/api/chat", json=req)
+    assert response.status_code == 200
+    data = response.json()
+    assert "I could not find specific documentation" in data["message"]
+    assert data["is_rag_grounded"] is False
+    assert len(data["citations"]) == 0
+
