@@ -28,7 +28,7 @@ async def direct_rag_query(req: RAGQueryRequest):
             filters=filters,
         )
 
-        answer, citations = generator.synthesize_rag_response(req.question, top_chunks)
+        answer, citations = await generator.synthesize_rag_response(req.question, top_chunks)
 
         return RAGQueryResponse(
             question=req.question,
