@@ -30,6 +30,10 @@ export const Navbar = () => {
   const navigate = useNavigate();
   const location = useLocation();
 
+  const userRole = (user?.role || '').toLowerCase();
+  const isOrganizer = userRole === 'organizer';
+  const isAdmin = userRole === 'admin';
+
   const cities = ['All Cities', 'Mumbai', 'Delhi', 'Bengaluru', 'Hyderabad', 'Pune'];
 
   // Sync search input with URL params when on /search page
@@ -153,37 +157,44 @@ export const Navbar = () => {
               Explore Events
             </Link>
 
-            {/* Organizer & Admin Quick Actions */}
-            {(user?.role === 'organizer' || user?.role === 'admin') && (
+            {/* Organizer Quick Actions (Strictly Organizer only) */}
+            {isOrganizer && (
               <>
                 <Link
-                  to="/organizer/dashboard"
+                  to="/organizer/dashboard?create=true"
                   className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white text-xs font-bold shadow-md shadow-indigo-600/20 transition-all hover:scale-[1.02]"
                 >
                   <FiPlusCircle className="w-4 h-4" />
                   <span>+ Create Event</span>
                 </Link>
-                {user?.role === 'organizer' && (
-                  <Link
-                    to="/organizer/dashboard"
-                    className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-indigo-50 border border-indigo-200 text-indigo-700 hover:bg-indigo-100 text-xs font-semibold transition-all"
-                  >
-                    <FiGrid className="w-4 h-4" />
-                    <span>Organizer Hub</span>
-                  </Link>
-                )}
+                <Link
+                  to="/organizer/dashboard"
+                  className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-indigo-50 border border-indigo-200 text-indigo-700 hover:bg-indigo-100 text-xs font-semibold transition-all"
+                >
+                  <FiGrid className="w-4 h-4" />
+                  <span>My Events</span>
+                </Link>
               </>
             )}
 
-            {/* Admin Quick Action */}
-            {user?.role === 'admin' && (
-              <Link
-                to="/admin/dashboard"
-                className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-purple-50 border border-purple-200 text-purple-700 hover:bg-purple-100 text-xs font-semibold transition-all"
-              >
-                <FiShield className="w-4 h-4" />
-                <span>Admin Console</span>
-              </Link>
+            {/* Admin Quick Actions (Strictly Admin only) */}
+            {isAdmin && (
+              <>
+                <Link
+                  to="/admin/dashboard"
+                  className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-purple-50 border border-purple-200 text-purple-700 hover:bg-purple-100 text-xs font-semibold transition-all"
+                >
+                  <FiShield className="w-4 h-4" />
+                  <span>Admin Console</span>
+                </Link>
+                <Link
+                  to="/admin/dashboard?tab=events"
+                  className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-indigo-50 border border-indigo-200 text-indigo-700 hover:bg-indigo-100 text-xs font-semibold transition-all"
+                >
+                  <FiGrid className="w-4 h-4" />
+                  <span>Manage Events</span>
+                </Link>
+              </>
             )}
 
             {/* Theme Toggle Button */}
@@ -234,6 +245,36 @@ export const Navbar = () => {
                         <FiCalendar className="w-4 h-4 text-indigo-500" />
                         My Bookings
                       </Link>
+                      {isOrganizer && (
+                        <Link
+                          to="/organizer/dashboard"
+                          onClick={() => setUserDropdownOpen(false)}
+                          className="flex items-center gap-2.5 px-4 py-2 text-xs font-medium text-indigo-700 hover:text-indigo-900 hover:bg-indigo-50"
+                        >
+                          <FiGrid className="w-4 h-4 text-indigo-600" />
+                          My Events
+                        </Link>
+                      )}
+                      {isAdmin && (
+                        <>
+                          <Link
+                            to="/admin/dashboard"
+                            onClick={() => setUserDropdownOpen(false)}
+                            className="flex items-center gap-2.5 px-4 py-2 text-xs font-medium text-purple-700 hover:text-purple-900 hover:bg-purple-50"
+                          >
+                            <FiShield className="w-4 h-4 text-purple-600" />
+                            Admin Console
+                          </Link>
+                          <Link
+                            to="/admin/dashboard?tab=events"
+                            onClick={() => setUserDropdownOpen(false)}
+                            className="flex items-center gap-2.5 px-4 py-2 text-xs font-medium text-indigo-700 hover:text-indigo-900 hover:bg-indigo-50"
+                          >
+                            <FiCalendar className="w-4 h-4 text-indigo-600" />
+                            Manage All Events
+                          </Link>
+                        </>
+                      )}
                       <Link
                         to="/profile"
                         onClick={() => setUserDropdownOpen(false)}
@@ -334,6 +375,46 @@ export const Navbar = () => {
                 <FiCalendar className="w-4 h-4 text-indigo-500" />
                 My Bookings
               </Link>
+              {isOrganizer && (
+                <>
+                  <Link
+                    to="/organizer/dashboard"
+                    onClick={() => setMobileMenuOpen(false)}
+                    className="flex items-center gap-2 text-sm text-indigo-700 hover:text-indigo-800 font-semibold py-1.5"
+                  >
+                    <FiGrid className="w-4 h-4 text-indigo-600" />
+                    My Events
+                  </Link>
+                  <Link
+                    to="/organizer/dashboard?create=true"
+                    onClick={() => setMobileMenuOpen(false)}
+                    className="flex items-center gap-2 text-sm text-purple-700 hover:text-purple-800 font-semibold py-1.5"
+                  >
+                    <FiPlusCircle className="w-4 h-4 text-purple-600" />
+                    + Create Event
+                  </Link>
+                </>
+              )}
+              {isAdmin && (
+                <>
+                  <Link
+                    to="/admin/dashboard"
+                    onClick={() => setMobileMenuOpen(false)}
+                    className="flex items-center gap-2 text-sm text-purple-700 hover:text-purple-800 font-semibold py-1.5"
+                  >
+                    <FiShield className="w-4 h-4 text-purple-600" />
+                    Admin Console
+                  </Link>
+                  <Link
+                    to="/admin/dashboard?tab=events"
+                    onClick={() => setMobileMenuOpen(false)}
+                    className="flex items-center gap-2 text-sm text-indigo-700 hover:text-indigo-800 font-semibold py-1.5"
+                  >
+                    <FiCalendar className="w-4 h-4 text-indigo-600" />
+                    Manage All Events
+                  </Link>
+                </>
+              )}
               <Link
                 to="/profile"
                 onClick={() => setMobileMenuOpen(false)}
