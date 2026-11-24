@@ -41,7 +41,10 @@ class HybridRetriever:
 
         # 1. Parallel candidate retrieval (fetch top 20 each)
         bm25_candidates = self.bm25.search(query, top_k=20)
-        vector_candidates = self.vector_store.search(query, top_k=20, filters=filters)
+        vector_candidates = self.vector_store.search(query, top_k=20, filters=filters, min_similarity=0.12)
+
+        if not bm25_candidates and not vector_candidates:
+            return []
 
         # 2. Reciprocal Rank Fusion (RRF)
         # RRF score = sum(weight / (k + rank))
