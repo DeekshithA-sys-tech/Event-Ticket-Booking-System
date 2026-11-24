@@ -60,42 +60,101 @@ class AgentOrchestrator:
             )
 
         # ── 2b. Handle User Profile / Account Details Query ────────────────────
-        is_user_details_query = any(
-            p in user_msg.lower()
-            for p in [
-                "user details", "get user details", "my details", "my profile",
-                "who am i", "account details", "my account", "user info", "profile details"
-            ]
+        is_user_details_query = (
+            any(
+                p in user_msg.lower()
+                for p in [
+                    "user details", "get user details", "my details", "my profile",
+                    "who am i", "account details", "my account", "user info", "profile details",
+                    "my role", "what is my role", "what's my role"
+                ]
+            )
+            or ("am i" in user_msg.lower() and any(r in user_msg.lower() for r in ["admin", "customer", "costumer", "organizer", "organiser", "user", "logged", "signed"]))
+            or user_msg.lower().strip(" ?.") in ["am i admin", "am i customer", "am i organizer", "what am i", "my role"]
         )
         if is_user_details_query:
-            if token and user_ctx.email:
-                role_label = user_ctx.role.capitalize()
+            role_label = (user_ctx.role or "customer").capitalize()
+            is_authed = getattr(user_ctx, "is_authenticated", False) or bool(token) or bool(user_ctx.email and user_ctx.user_id != "guest")
+            if not is_authed:
                 return ChatResponse(
                     conversation_id=req.conversation_id,
                     message=(
-                        f"### 👤 User Account Details\n\n"
-                        f"- **User ID:** `{user_ctx.user_id}`\n"
-                        f"- **Email Address:** `{user_ctx.email}`\n"
-                        f"- **Role:** `{role_label}`\n"
-                        f"- **Status:** Active & Verified\n\n"
-                        f"💡 *You can view your active bookings by asking 'show my bookings' or manage your profile in the app header.*"
+                        "### 👤 User Account Details\n\n"
+                        "You are currently browsing as a **Guest** (unauthenticated).\n\n"
+                        "Please sign in or register to check your account role, manage tickets, or make bookings."
                     ),
                     citations=[],
                     is_rag_grounded=False,
                     requires_confirmation=False,
                 )
             else:
+                user_id_str = f"- **User ID:** `{user_ctx.user_id}`\n" if user_ctx.user_id and user_ctx.user_id != "guest" else ""
+                email_str = f"- **Email Address:** `{user_ctx.email}`\n" if user_ctx.email else ""
+                role_desc = (
+                    "As an administrator, you have full access to manage events, moderate reviews, and view all users."
+                    if role_label.lower() == "admin"
+                    else "As an organizer, you can create events and view sales analytics."
+                    if role_label.lower() == "organizer"
+                    else "You can browse live events, book seats, and manage your tickets."
+                )
                 return ChatResponse(
                     conversation_id=req.conversation_id,
                     message=(
-                        "### 👤 User Account\n\n"
-                        "You are currently browsing as a **Guest** (unauthenticated).\n\n"
-                        "Please sign in or register to view your account profile, manage tickets, or make bookings."
+                        f"### 👤 User Account Details & Role\n\n"
+                        f"- **Role:** `{role_label}`\n"
+                        f"{email_str}"
+                        f"{user_id_str}"
+                        f"- **Status:** Active & Verified\n\n"
+                        f"You are currently authenticated as an **{role_label}**.\n\n"
+                        f"💡 *{role_desc}*"
                     ),
                     citations=[],
                     is_rag_grounded=False,
                     requires_confirmation=False,
                 )
+
+        # ── 2c. Handle Admin List Users Query ───────────────────────────────────
+        is_list_users_query = any(
+            p in user_msg.lower()
+            for p in [
+                "list all the users", "list all users", "list users", "show all users",
+                "get all users", "view all users", "show users", "all users", "user list"
+            ]
+        ) and not any(p in user_msg.lower() for p in ["my details", "my profile", "who am i", "am i", "user details", "get user details"])
+        if is_list_users_query:
+            if role != "admin":
+                return ChatResponse(
+                    conversation_id=req.conversation_id,
+                    message="🔒 **Admin Permission Required**\n\nListing platform users is strictly restricted to platform **Administrators**.",
+                    citations=[],
+                    is_rag_grounded=False,
+                    requires_confirmation=False,
+                )
+            result = await tool_registry.execute("list_users", {"limit": 10}, token=token, user=user_ctx)
+            return self._format_list_users_response(req.conversation_id, result)
+
+        # ── 2d. Handle Golden Dataset / Benchmark Query ─────────────────────────
+        if any(p in user_msg.lower() for p in ["golden dataset", "golden evaluation", "evaluation dataset", "eval dataset", "benchmark dataset"]):
+            from app.eval.golden_dataset import GOLDEN_EVALUATION_DATASET
+            lines = [
+                f"### 🧪 EventPulse Golden Evaluation Benchmark ({len(GOLDEN_EVALUATION_DATASET)} Test Cases)\n",
+                "The golden dataset evaluates retrieval precision, anti-hallucination grounding, live tool invocation, and RBAC security:\n",
+                "| ID | Category | Question | Expected Output / Action |",
+                "|---|---|---|---|",
+            ]
+            for item in GOLDEN_EVALUATION_DATASET:
+                eid = item.get("id")
+                cat = item.get("category")
+                q = item.get("question")
+                action = item.get("expected_action") or item.get("expected_tool") or ("Refusal" if item.get("expected_refusal") else "Rejection" if item.get("expected_rejection") else "tool")
+                lines.append(f"| `{eid}` | {cat} | {q} | `{action}` |")
+            return ChatResponse(
+                conversation_id=req.conversation_id,
+                message="\n".join(lines),
+                citations=[],
+                is_rag_grounded=False,
+                requires_confirmation=False,
+            )
 
         # ── 2c. Handle Event Creation Intent ───────────────────────────────────
         is_create_event_query = (
@@ -255,7 +314,7 @@ class AgentOrchestrator:
                 pending_action=pending,
             )
 
-        # Booking / Seat lock request
+        # Booking / Seat lock request with explicit seats
         book_match = re.search(r"(?:book|reserve|lock)\s+seat\s+([A-Za-z0-9,_-]+)\s+for\s+(?:event\s+)?([a-fA-F0-9]{24})", user_msg, re.IGNORECASE)
         if book_match:
             raw_seats = book_match.group(1).split(",")
@@ -274,12 +333,69 @@ class AgentOrchestrator:
                 pending_action=pending,
             )
 
+        # Natural booking request: e.g. "book 3 tickets" or "Live Jazz book 3 tickets anywhere"
+        natural_book_match = re.search(r"(?:book|reserve|lock)\s+(\d+)\s+tickets?", user_msg, re.IGNORECASE)
+        if natural_book_match:
+            qty = int(natural_book_match.group(1))
+            candidate_title = re.sub(r"(?:book|reserve|lock)\s+\d+\s+tickets?(?:\s+any\s*where)?", "", user_msg, flags=re.IGNORECASE).strip(" ,.-0123456789")
+            target_event = None
+            if candidate_title and len(candidate_title) > 2:
+                res = await tool_registry.execute("search_events", {"q": candidate_title}, token=token, user=user_ctx)
+                evs = res.get("data", [])
+                if isinstance(evs, dict) and "events" in evs:
+                    evs = evs["events"]
+                if isinstance(evs, list) and evs:
+                    target_event = evs[0]
+
+            if target_event:
+                ev_id = str(target_event.get("_id", ""))
+                ev_title = target_event.get("title", "Event")
+                price = float(target_event.get("ticketPrice", 200))
+                auto_seats = [f"A-{i+1}" for i in range(qty)]
+                pending = PendingAction(
+                    action="create_booking",
+                    payload={"event_id": ev_id, "seat_ids": auto_seats},
+                    summary=f"Confirm reservation of {qty} ticket(s) ({', '.join(auto_seats)}) for '{ev_title}' at ₹{price * qty:.2f}",
+                    requires_confirmation=True,
+                )
+                return ChatResponse(
+                    conversation_id=req.conversation_id,
+                    message=(
+                        f"🎟️ **Booking Confirmation Request**\n\n"
+                        f"- **Event:** {ev_title}\n"
+                        f"- **Quantity:** {qty} ticket(s)\n"
+                        f"- **Allocated Seats:** `{', '.join(auto_seats)}`\n"
+                        f"- **Total Amount:** ₹{price * qty:.2f}\n\n"
+                        f"Please confirm to lock these seats and proceed to checkout."
+                    ),
+                    requires_confirmation=True,
+                    pending_action=pending,
+                )
+
         # ── 7. Handle Event Discovery with Structured Filters ──────────────────
-        if any(w in user_msg.lower() for w in ["find", "search", "explore", "show me events", "concerts", "comedy in", "shows"]):
+        is_discovery_query = (
+            any(w in user_msg.lower() for w in [
+                "find", "search", "explore", "show me events", "concerts", "concert", "comedy in", "shows", "show",
+                "list the event", "list events", "events", "below", "under", "cheap", "tickets in", "browse events"
+            ])
+            and not any(w in user_msg.lower() for w in ["cancel", "refund", "policy", "faq", "rules", "my bookings", "create event"])
+        )
+        if is_discovery_query:
             filters = extract_structured_filters(user_msg)
-            # Execute live search tool
+            # Clean q by removing filter tokens and query stop words
+            clean_q = user_msg.lower()
+            for stop_word in [
+                "find", "upcoming", "shows", "show", "events", "event", "list", "the", "in",
+                "below", "under", "price", "rupees", "rs", "inr", "for", "me", "all", "any", "please"
+            ]:
+                clean_q = re.sub(rf"\b{stop_word}\b", " ", clean_q, flags=re.IGNORECASE)
+            if filters.get("city"):
+                clean_q = re.sub(rf"\b{filters['city'].lower()}\b", " ", clean_q, flags=re.IGNORECASE)
+            clean_q = re.sub(r"\d+", " ", clean_q)
+            clean_q = " ".join(clean_q.split()).strip()
+
             search_args = {
-                "q": user_msg,
+                "q": clean_q if len(clean_q) > 2 else None,
                 "city": filters.get("city"),
                 "category": filters.get("category"),
                 "max_price": filters.get("max_price"),
@@ -308,6 +424,28 @@ class AgentOrchestrator:
                     conversation_id=req.conversation_id,
                     message=msg,
                     event_cards=cards,
+                    is_rag_grounded=False,
+                    tool_calls_used=[{"name": "search_events", "arguments": search_args}],
+                )
+            elif not res.get("error") and (filters.get("city") or filters.get("category") or filters.get("max_price")):
+                criteria_parts = []
+                if filters.get("city"):
+                    criteria_parts.append(f"in {filters['city']}")
+                if filters.get("category"):
+                    criteria_parts.append(f"under {filters['category']}")
+                if filters.get("max_price"):
+                    criteria_parts.append(f"under ₹{filters['max_price']}")
+                criteria_str = " ".join(criteria_parts) or "your search"
+
+                return ChatResponse(
+                    conversation_id=req.conversation_id,
+                    message=(
+                        f"### 🎪 No Events Found\n\n"
+                        f"No live events currently match {criteria_str}.\n\n"
+                        f"💡 *Try searching without price limits or explore events across other cities like Bangalore, Mumbai, or Mysuru.*"
+                    ),
+                    event_cards=[],
+                    citations=[],
                     is_rag_grounded=False,
                     tool_calls_used=[{"name": "search_events", "arguments": search_args}],
                 )
@@ -502,4 +640,36 @@ class AgentOrchestrator:
             message=msg,
             requires_confirmation=False,
             tool_calls_used=[{"name": "get_organizer_analytics"}],
+        )
+
+    def _format_list_users_response(self, conv_id: str, result: Dict[str, Any]) -> ChatResponse:
+        data = result.get("data", {})
+        users = data.get("users", []) if isinstance(data, dict) else []
+        total = data.get("total", len(users)) if isinstance(data, dict) else len(users)
+
+        if not isinstance(users, list) or not users:
+            return ChatResponse(
+                conversation_id=conv_id,
+                message="### 👥 Platform Users\n\nNo registered users found in the system.",
+                requires_confirmation=False,
+                tool_calls_used=[{"name": "list_users"}],
+            )
+
+        lines = [
+            f"### 👥 Registered Platform Users ({total} total)\n",
+            "| Name | Email | Role | Status |",
+            "|---|---|---|---|",
+        ]
+        for u in users[:10]:
+            name = u.get("name", "N/A")
+            email = u.get("email", "N/A")
+            u_role = u.get("role", "customer").capitalize()
+            status = "Active" if u.get("isActive", True) else "Inactive"
+            lines.append(f"| {name} | `{email}` | **{u_role}** | {status} |")
+
+        return ChatResponse(
+            conversation_id=conv_id,
+            message="\n".join(lines),
+            requires_confirmation=False,
+            tool_calls_used=[{"name": "list_users"}],
         )
