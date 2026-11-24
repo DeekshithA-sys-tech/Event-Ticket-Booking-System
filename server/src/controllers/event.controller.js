@@ -195,6 +195,13 @@ export const createEvent = asyncHandler(async (req, res) => {
     eventData.totalSeats || 50
   );
 
+  // Organizers must submit events for Admin review (status: draft).
+  // Only platform Admins can directly create and publish an event immediately.
+  const eventStatus =
+    req.user?.role === 'admin'
+      ? eventData.status || EVENT_STATUS.PUBLISHED
+      : EVENT_STATUS.DRAFT;
+
   const event = await eventRepo.createEvent({
     ...eventData,
     category: category._id,
@@ -203,7 +210,7 @@ export const createEvent = asyncHandler(async (req, res) => {
     seatLayout: layout,
     totalSeats,
     availableSeats: totalSeats,
-    status: eventData.status || EVENT_STATUS.PUBLISHED,
+    status: eventStatus,
   });
 
   logger.info(`Event created: "${event.title}" by organizer ${organizerId}`);
