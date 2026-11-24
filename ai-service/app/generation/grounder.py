@@ -150,8 +150,8 @@ class GroundedGenerator:
             venue = top_chunk.metadata.get("venue", "")
             price = top_chunk.metadata.get("price", "N/A")
 
-            lines = [f"### 🎪 {title} [{1}]\n"]
-            for idx, (c, _) in enumerate(event_chunks[:3]):
+            lines = [f"### 🎪 {title} [1]\n"]
+            for idx, c in enumerate(event_chunks[:3]):
                 cite_idx = idx + 1
                 sec = c.metadata.get("section", "Details")
                 lines.append(f"**{sec}** [{cite_idx}]: {c.text}")
