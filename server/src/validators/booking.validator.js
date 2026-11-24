@@ -62,7 +62,7 @@ export const cancelBookingSchema = z.object({
       .trim()
       .max(500, 'Reason cannot exceed 500 characters')
       .optional(),
-  }),
+  }).optional().default({}),
 });
 
 // ─── Booking ID Param ─────────────────────────────────────────────────────────
