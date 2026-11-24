@@ -5,12 +5,23 @@ import { Toaster } from 'react-hot-toast';
 import { Navbar } from '../components/Navbar.jsx';
 import { Footer } from '../components/Footer.jsx';
 import { AIChatWidget } from '../components/AIChatWidget.jsx';
-import { clearCredentials } from '../store/authSlice.js';
+import { clearCredentials, fetchCurrentUser } from '../store/authSlice.js';
 
 export const MainLayout = () => {
   const dispatch = useDispatch();
   const navigate = useNavigate();
   const location = useLocation();
+
+  useEffect(() => {
+    const token = localStorage.getItem('accessToken');
+    if (token) {
+      dispatch(fetchCurrentUser()).unwrap().catch(() => {});
+    }
+  }, [dispatch]);
+
+  useEffect(() => {
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }, [location.pathname, location.search]);
 
   useEffect(() => {
     const handleAuthLogout = () => {
