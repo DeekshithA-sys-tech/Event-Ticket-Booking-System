@@ -51,14 +51,17 @@ export const AdminDashboardPage = () => {
       const [dashRes, usersRes, eventsRes, logsRes, healthRes] = await Promise.all([
         adminService.getDashboard().catch(() => ({ data: {} })),
         adminService.listUsers({ limit: 100 }).catch(() => ({ data: [] })),
-        eventService.getEvents({ limit: 100, status: 'all' }).catch(() => ({ data: [] })),
+        adminService.listEvents({ limit: 100, status: 'all' }).catch(() => ({ data: [] })),
         adminService.getAuditLogs({ limit: 20 }).catch(() => ({ data: [] })),
         adminService.getSystemHealth().catch(() => ({ data: null })),
       ]);
 
       setDashboardStats(dashRes?.data || {});
       setUsers(usersRes?.data || []);
-      setEvents(eventsRes?.data || []);
+      const rawEvents = Array.isArray(eventsRes?.data)
+        ? eventsRes.data
+        : (eventsRes?.data?.events || eventsRes?.events || []);
+      setEvents(rawEvents);
       setAuditLogs(logsRes?.data || []);
       setHealth(healthRes?.data || null);
     } catch (_err) {
