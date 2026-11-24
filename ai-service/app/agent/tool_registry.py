@@ -144,6 +144,21 @@ class ToolRegistry:
             )
         )
 
+        # 9. List Users (Admin only)
+        self.register(
+            ToolDefinition(
+                name="list_users",
+                description="List registered platform users, roles, and account status (Admin only).",
+                parameters={
+                    "role": "Optional filter by role (customer, organizer, admin)",
+                    "search": "Optional search term for name or email",
+                    "limit": "Maximum results to return (default 10)",
+                },
+                required_role="admin",
+                is_write_action=False,
+            )
+        )
+
     def register(self, tool_def: ToolDefinition):
         self.tools[tool_def.name] = tool_def
 
@@ -155,7 +170,9 @@ class ToolRegistry:
                 allowed.append(tool)
             elif tool.required_role == "customer":
                 allowed.append(tool)
-            elif tool.required_role in ["organizer", "admin"] and role in ["organizer", "admin"]:
+            elif tool.required_role == "organizer" and role in ["organizer", "admin"]:
+                allowed.append(tool)
+            elif tool.required_role == "admin" and role == "admin":
                 allowed.append(tool)
         return allowed
 
@@ -214,10 +231,15 @@ class ToolRegistry:
             return {"success": False, "error": f"Tool '{tool_name}' is not registered."}
 
         role = user.role if user else "customer"
-        if tool_def.required_role in ["organizer", "admin"] and role not in ["organizer", "admin"]:
+        if tool_def.required_role == "admin" and role != "admin":
             return {
                 "success": False,
-                "error": f"Access denied: '{tool_name}' requires {tool_def.required_role} role permissions.",
+                "error": f"Access denied: '{tool_name}' requires admin role permissions.",
+            }
+        elif tool_def.required_role == "organizer" and role not in ["organizer", "admin"]:
+            return {
+                "success": False,
+                "error": f"Access denied: '{tool_name}' requires organizer role permissions.",
             }
 
         # 1. Search Events
@@ -290,6 +312,17 @@ class ToolRegistry:
                 "status": "published",
             }
             return await express_client.post("/events", body=body, token=token)
+
+        # 9. List Users (Admin only)
+        elif tool_name == "list_users":
+            params = {}
+            if arguments.get("role"):
+                params["role"] = arguments["role"]
+            if arguments.get("search"):
+                params["search"] = arguments["search"]
+            if arguments.get("limit"):
+                params["limit"] = arguments["limit"]
+            return await express_client.get("/users", token=token, params=params)
 
         return {"success": False, "error": f"Unhandled tool: {tool_name}"}
 
