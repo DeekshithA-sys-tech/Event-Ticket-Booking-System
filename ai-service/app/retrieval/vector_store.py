@@ -1,5 +1,5 @@
 import hashlib
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 
 from app.core.config import settings
@@ -56,46 +56,87 @@ def text_to_dense_vector(text: str, dim: int = 384) -> np.ndarray:
     return vec
 
 
-class DenseVectorIndex:
+class ChromaVectorStore:
     """
-    In-memory semantic vector store powered by 'all-MiniLM-L6-v2' embeddings
-    with Cosine Similarity search and metadata filtering.
-    100% offline, zero-cost, runs on local CPU.
+    ChromaDB persistent vector database storing dense embeddings with Cosine Similarity (HNSW).
+    Embeddings are generated via 'all-MiniLM-L6-v2' (dim=384) with zero external network dependencies.
     """
 
-    def __init__(self, dim: int = 384):
+    def __init__(self, dim: int = 384, collection_name: Optional[str] = None):
         self.dim = dim
+        self.collection_name = collection_name or getattr(settings, "CHROMA_COLLECTION_NAME", "eventpulse_vectors")
+        self.chunks_map: Dict[str, TextChunk] = {}
         self.chunks: List[TextChunk] = []
-        self.vectors: np.ndarray = np.empty((0, dim), dtype=np.float32)
+
+        # Initialize ChromaDB Client
+        import chromadb
+        try:
+            persist_dir = str(getattr(settings, "CHROMA_PERSIST_DIR", settings.DATA_DIR / "chroma_db"))
+            self.client = chromadb.PersistentClient(path=persist_dir)
+            logger.info(f"[ChromaDB] Initialized persistent ChromaDB at {persist_dir}")
+        except Exception as e:
+            logger.warning(f"[ChromaDB] PersistentClient failed ({e}), falling back to Ephemeral Client.")
+            self.client = chromadb.Client()
+
+        # Get or create collection with cosine space
+        self.collection = self.client.get_or_create_collection(
+            name=self.collection_name,
+            metadata={"hnsw:space": "cosine"},
+        )
+
+    def _sanitize_metadata(self, meta: Dict[str, Any]) -> Dict[str, Any]:
+        """ChromaDB metadata values must be str, int, float, or bool."""
+        clean = {}
+        for k, v in meta.items():
+            if v is None:
+                clean[k] = ""
+            elif isinstance(v, (str, int, float, bool)):
+                clean[k] = v
+            else:
+                clean[k] = str(v)
+        return clean
 
     def fit(self, chunks: List[TextChunk]):
+        """Indexes text chunks and their dense embeddings into ChromaDB collection."""
         self.chunks = chunks
+        self.chunks_map = {chunk.chunk_id: chunk for chunk in chunks}
         if not chunks:
-            self.vectors = np.empty((0, self.dim), dtype=np.float32)
             return
 
         model = get_embedding_model()
+        texts = [chunk.full_content for chunk in chunks]
+
         if model is not None:
             try:
-                texts = [chunk.full_content for chunk in chunks]
                 embeddings = model.encode(texts, normalize_embeddings=True, show_progress_bar=False)
-                self.vectors = np.array(embeddings, dtype=np.float32)
-                self.dim = self.vectors.shape[1]
-                logger.info(f"[VectorStore] Vectorized {len(chunks)} chunks using all-MiniLM-L6-v2 (dim={self.dim}).")
-                return
+                vectors = np.array(embeddings, dtype=np.float32)
+                self.dim = vectors.shape[1]
+                logger.info(f"[ChromaDB] Encoded {len(chunks)} chunks with all-MiniLM-L6-v2 (dim={self.dim}).")
             except Exception as e:
-                logger.warning(f"[VectorStore] Model encoding failed: {e}. Using fallback vectorizer.")
+                logger.warning(f"[ChromaDB] Model encoding failed: {e}. Using fallback vectorizer.")
+                vectors = np.array([text_to_dense_vector(t, dim=self.dim) for t in texts], dtype=np.float32)
+        else:
+            vectors = np.array([text_to_dense_vector(t, dim=self.dim) for t in texts], dtype=np.float32)
 
-        # Fallback encoding
-        matrix = np.zeros((len(chunks), self.dim), dtype=np.float32)
-        for i, chunk in enumerate(chunks):
-            matrix[i] = text_to_dense_vector(chunk.full_content, dim=self.dim)
-        self.vectors = matrix
+        ids = [chunk.chunk_id for chunk in chunks]
+        metadatas = [self._sanitize_metadata(chunk.metadata) for chunk in chunks]
+
+        try:
+            self.collection.upsert(
+                ids=ids,
+                documents=texts,
+                embeddings=vectors.tolist(),
+                metadatas=metadatas,
+            )
+            logger.info(f"[ChromaDB] Successfully upserted {len(chunks)} vectors into collection '{self.collection_name}'.")
+        except Exception as e:
+            logger.error(f"[ChromaDB] Failed to upsert chunks into ChromaDB: {e}", exc_info=True)
 
     def search(
         self, query: str, top_k: int = 10, filters: Dict = None, min_similarity: float = 0.12
     ) -> List[Tuple[TextChunk, float]]:
-        if self.vectors.shape[0] == 0 or not query.strip():
+        """Queries ChromaDB using cosine similarity and returns ranked (chunk, score) tuples."""
+        if not self.chunks_map or not query.strip():
             return []
 
         model = get_embedding_model()
@@ -108,14 +149,33 @@ class DenseVectorIndex:
         else:
             q_vec = text_to_dense_vector(query, dim=self.dim)
 
-        # Since vectors are L2-normalized, inner product = cosine similarity
-        sims = np.dot(self.vectors, q_vec)
+        n_results = min(top_k * 3, len(self.chunks_map))
+        if n_results == 0:
+            return []
+
+        try:
+            res = self.collection.query(
+                query_embeddings=[q_vec.tolist()],
+                n_results=n_results,
+            )
+        except Exception as e:
+            logger.error(f"[ChromaDB] Query failed: {e}")
+            return []
+
+        retrieved_ids = res.get("ids", [[]])[0]
+        distances = res.get("distances", [[]])[0]
 
         results: List[Tuple[TextChunk, float]] = []
-        for idx, score in enumerate(sims):
-            if float(score) < min_similarity:
+        for c_id, dist in zip(retrieved_ids, distances):
+            chunk = self.chunks_map.get(c_id)
+            if not chunk:
                 continue
-            chunk = self.chunks[idx]
+
+            # Cosine space in ChromaDB returns cosine distance d = 1 - cosine_similarity
+            # Thus similarity score = 1.0 - d
+            sim = float(max(-1.0, min(1.0, 1.0 - dist)))
+            if sim < min_similarity:
+                continue
 
             # Apply metadata filters if provided
             if filters:
@@ -133,7 +193,11 @@ class DenseVectorIndex:
                 if not match:
                     continue
 
-            results.append((chunk, float(score)))
+            results.append((chunk, sim))
 
         results.sort(key=lambda x: x[1], reverse=True)
         return results[:top_k]
+
+
+# Alias DenseVectorIndex to ChromaVectorStore for seamless drop-in backwards compatibility
+DenseVectorIndex = ChromaVectorStore
