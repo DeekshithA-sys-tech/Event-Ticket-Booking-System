@@ -114,13 +114,18 @@ class AgentOrchestrator:
                 )
 
         # ── 2c. Handle Admin List Users Query ───────────────────────────────────
-        is_list_users_query = any(
-            p in user_msg.lower()
-            for p in [
-                "list all the users", "list all users", "list users", "show all users",
-                "get all users", "view all users", "show users", "all users", "user list"
-            ]
-        ) and not any(p in user_msg.lower() for p in ["my details", "my profile", "who am i", "am i", "user details", "get user details"])
+        is_list_users_query = (
+            bool(re.search(r"\b(?:list|show|get|view)\s+(?:all\s+)?(?:the\s+)?users?\b", user_msg, re.IGNORECASE))
+            or any(
+                p in user_msg.lower()
+                for p in [
+                    "list all the users", "list all the user", "list all users", "list all user",
+                    "list users", "list user", "show all users", "show all user", "get all users",
+                    "get all user", "view all users", "view all user", "show users", "show user",
+                    "all users", "all user", "user list", "platform users"
+                ]
+            )
+        ) and not any(p in user_msg.lower() for p in ["my details", "my profile", "who am i", "am i", "my account", "my role", "user details", "get user details"])
         if is_list_users_query:
             if role != "admin":
                 return ChatResponse(
@@ -643,11 +648,32 @@ class AgentOrchestrator:
         )
 
     def _format_list_users_response(self, conv_id: str, result: Dict[str, Any]) -> ChatResponse:
-        data = result.get("data", {})
-        users = data.get("users", []) if isinstance(data, dict) else []
-        total = data.get("total", len(users)) if isinstance(data, dict) else len(users)
+        # Check for errors from backend
+        if result.get("success") is False or result.get("error"):
+            err_msg = result.get("message") or result.get("error") or "Failed to retrieve user list from backend."
+            return ChatResponse(
+                conversation_id=conv_id,
+                message=f"### 👥 Platform Users\n\n⚠️ {err_msg}",
+                requires_confirmation=False,
+                tool_calls_used=[{"name": "list_users"}],
+            )
 
-        if not isinstance(users, list) or not users:
+        data = result.get("data")
+        users = []
+        if isinstance(data, list):
+            users = data
+        elif isinstance(data, dict):
+            users = data.get("users", [])
+
+        meta = result.get("meta", {})
+        total = meta.get("total") if isinstance(meta, dict) else None
+        if total is None:
+            if isinstance(data, dict) and "total" in data:
+                total = data["total"]
+            else:
+                total = len(users)
+
+        if not users:
             return ChatResponse(
                 conversation_id=conv_id,
                 message="### 👥 Platform Users\n\nNo registered users found in the system.",
