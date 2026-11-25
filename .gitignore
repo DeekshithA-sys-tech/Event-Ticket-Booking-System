@@ -45,3 +45,5 @@ env/
 venv/
 .venv/
 .pytest_cache/
+ai-service/data/chroma_db/
+chroma_db/
