@@ -189,6 +189,49 @@ async def test_rbac_permits_organizer_analytics():
         assert "240,000.00" in data["message"]
 
 
+@pytest.mark.asyncio
+async def test_rbac_permits_organizer_nested_analytics_dict():
+    """Verify Express nested revenue/bookings dictionary response formats cleanly without JSON or dict leakage."""
+    mock_nested_overview = {
+        "revenue": {
+            "total": 18200,
+            "thisMonth": 1500,
+            "lastMonth": 1500,
+            "changePercent": 0,
+        },
+        "bookings": {
+            "total": 12,
+            "uniqueAttendees": 8,
+        },
+        "events": {
+            "total": 3,
+            "published": 2,
+            "upcoming": 2,
+        },
+    }
+
+    with patch("app.agent.http_client.express_client.get", new_callable=AsyncMock) as mock_get:
+        mock_get.return_value = {
+            "success": True,
+            "data": mock_nested_overview,
+        }
+
+        req = {
+            "conversation_id": "test-nested-analytics",
+            "message": "Show sales analytics and revenue",
+            "user": {"role": "organizer"},
+            "auth_token": "organizer-jwt-token",
+        }
+        response = client.post("/api/chat", json=req)
+        assert response.status_code == 200
+        data = response.json()
+        assert "18,200.00" in data["message"]
+        assert "{'total'" not in data["message"]
+        assert "Tickets Sold" in data["message"]
+        assert "12 tickets" in data["message"]
+
+
+
 def test_user_details_query_authenticated():
     """Verify authenticated user asking for details receives their account profile."""
     req = {
