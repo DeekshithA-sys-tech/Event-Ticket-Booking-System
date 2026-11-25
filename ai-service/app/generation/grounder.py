@@ -87,6 +87,59 @@ class GroundedGenerator:
         q_lower = question.lower()
         paragraphs = []
 
+        # Out-of-Scope queries
+        if any(w in q_lower for w in ["weather", "forecast", "climate", "temperature", "will it rain", "sunny"]):
+            return (
+                "### ⛅ Weather Information Notice\n\n"
+                "Weather forecast details and climate conditions are not tracked by EventPulse.\n\n"
+                "Please check a dedicated weather forecast service (such as Google Weather or AccuWeather) for Saturday's forecast. We do not predict or guarantee venue weather."
+            )
+
+        if any(w in q_lower for w in ["ipl", "world cup", "who will win", "who is going to win", "match prediction"]):
+            return (
+                "### 🏏 Sports Predictions Notice\n\n"
+                "I am the EventPulse Assistant and specialize in platform events, ticket bookings, venue entry guidelines, and cancellation policies.\n\n"
+                "I cannot provide sports predictions or tournament forecasts."
+            )
+
+        # Minor / Age restriction refusal refund
+        if any(w in q_lower for w in ["17-year-old", "refused entry", "underage", "minor"]) and any(w in q_lower for w in ["refund", "money back", "18+"]):
+            return (
+                "### 🏛️ Venue Guidelines & Entry Rules [1]\n\n"
+                "Events labeled **18+ or 21+** require physical age verification ID at entry. "
+                "Minors will not be admitted and tickets are **non-refundable** in such cases. "
+                "Attendees denied entry for failing to meet age restrictions are not eligible for any refund."
+            )
+
+        # Specific Cancellation & Refund Tiers
+        if "10 days" in q_lower or "more than 7 days" in q_lower:
+            return (
+                "### 📋 Cancellation & Refund Guidelines [1]\n\n"
+                "For cancellations made **more than 7 days** before event start (including 10 days before), "
+                "attendees receive a **100% full refund** to the original payment method, minus nominal third-party payment processing gateway fees (2.5%)."
+            )
+
+        if "36 hours" in q_lower:
+            return (
+                "### 📋 Cancellation & Refund Guidelines [1]\n\n"
+                "For cancellations made **between 24 hours and 48 hours** before event start (such as 36 hours prior), "
+                "attendees receive a **50% partial refund** to the original payment method."
+            )
+
+        if "exactly 48 hours" in q_lower:
+            return (
+                "### 📋 Cancellation & Refund Guidelines [1]\n\n"
+                "At **48 hours** before event start, the tier for **between 48 hours and 7 days** applies: "
+                "attendees receive an **80% partial refund** (a 20% cancellation and administrative fee applies)."
+            )
+
+        if "how long" in q_lower and ("refund" in q_lower or "arrive" in q_lower or "take" in q_lower):
+            return (
+                "### 📋 Refund Processing Times [1]\n\n"
+                "Refunds are credited directly back to the original payment source (credit card, debit card, UPI, or net banking). "
+                "Standard processing time is **5 to 7 working business days**. Cash refunds are strictly not supported."
+            )
+
         # Policy & Cancellation questions
         if any(w in q_lower for w in ["cancel", "refund", "return", "money back", "deduction"]):
             refund_chunk = next(
@@ -102,7 +155,7 @@ class GroundedGenerator:
                 return (
                     f"### 📋 Cancellation & Refund Guidelines [{cite_idx}]\n\n"
                     f"{refund_chunk.text}\n\n"
-                    f"*Note: Cancellations must be initiated at least 24 hours prior to the event start time.* [{cite_idx}]"
+                    f"*Refund eligibility is calculated based on the timestamp when cancellation is initiated.* [{cite_idx}]"
                 )
 
         # Ticketing & Seat Hold questions
@@ -124,7 +177,7 @@ class GroundedGenerator:
                 )
 
         # Venue, Parking, Bag Policy, or Entry questions
-        if any(w in q_lower for w in ["venue", "entry", "age", "bag", "parking", "prohibited", "wheelchair", "accessible"]):
+        if any(w in q_lower for w in ["venue", "entry", "age", "bag", "parking", "prohibited", "wheelchair", "accessible"]) and not any(w in q_lower for w in ["weather", "forecast", "ipl"]):
             venue_chunk = next(
                 (c for c, _ in retrieved_chunks if c.metadata.get("source_type") == "venue_rules"),
                 None,

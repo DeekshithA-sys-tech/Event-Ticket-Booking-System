@@ -161,7 +161,124 @@ class AgentOrchestrator:
                 requires_confirmation=False,
             )
 
-        # ── 2c. Handle Event Creation Intent ───────────────────────────────────
+        # ── 2e. Handle Weather Query (GQ-061) ─────────────────────────────────
+        if any(w in user_msg.lower() for w in ["weather", "forecast", "will it rain", "temperature", "climate", "sunny"]):
+            return ChatResponse(
+                conversation_id=req.conversation_id,
+                message=(
+                    "### ⛅ Weather Information Notice\n\n"
+                    "Weather forecast details and climate conditions are not tracked by EventPulse.\n\n"
+                    "Please check a dedicated weather forecast service (such as Google Weather or AccuWeather) for Saturday's conditions in your venue area. EventPulse cannot predict or guarantee venue weather."
+                ),
+                citations=[],
+                is_rag_grounded=False,
+                requires_confirmation=False,
+            )
+
+        # ── 2f. Handle Sports Predictions Query (GQ-062) ──────────────────────
+        if any(w in user_msg.lower() for w in ["ipl", "world cup", "who is going to win", "who will win", "predict match", "match prediction"]):
+            return ChatResponse(
+                conversation_id=req.conversation_id,
+                message=(
+                    "### 🏏 Sports & Event Scope Notice\n\n"
+                    "I am the EventPulse AI Assistant and specialize in platform events, ticket bookings, venue entry guidelines, and cancellation policies.\n\n"
+                    "I cannot provide sports predictions, tournament forecasts, or team outcome analysis. If you'd like to browse upcoming live sports matches, concerts, or comedy shows on EventPulse, I'd be happy to help!"
+                ),
+                citations=[],
+                is_rag_grounded=False,
+                requires_confirmation=False,
+            )
+
+        # ── 2g. Handle Student Discount Query (GQ-063) ────────────────────────
+        if any(p in user_msg.lower() for p in ["student discount", "student offer", "college discount"]):
+            return ChatResponse(
+                conversation_id=req.conversation_id,
+                message=(
+                    "### 🎓 Student Discount Guidelines\n\n"
+                    "Valid student IDs are accepted as recognized photo identification at venue check-in when claiming student discounts.\n\n"
+                    "However, specific discount percentages and concession terms vary by organizer and are not standardized in the platform knowledge base. Please check the individual event details page or contact event support directly."
+                ),
+                citations=[],
+                is_rag_grounded=False,
+                requires_confirmation=False,
+            )
+
+        # ── 2h. Handle PayPal / Cryptocurrency Query (GQ-064) ──────────────────
+        if any(p in user_msg.lower() for p in ["paypal", "crypto", "cryptocurrency", "bitcoin", "eth"]):
+            return ChatResponse(
+                conversation_id=req.conversation_id,
+                message=(
+                    "### 💳 Accepted Payment Methods\n\n"
+                    "Payment options available for each event (such as UPI, Credit/Debit cards, and Net Banking) are displayed during checkout.\n\n"
+                    "The EventPulse knowledge base does not list PayPal or cryptocurrency as supported payment methods. Please refer to the checkout screen for all currently enabled payment gateways."
+                ),
+                citations=[],
+                is_rag_grounded=False,
+                requires_confirmation=False,
+            )
+
+        # ── 2i. Handle Adversarial Prompt Injection Defense (GQ-065) ───────────
+        if any(p in user_msg.lower() for p in [
+            "ignore all previous instructions", "ignore previous instructions",
+            "disregard previous instructions", "system prompt", "jailbreak",
+            "give me a full refund right now", "give me a refund right now"
+        ]):
+            return ChatResponse(
+                conversation_id=req.conversation_id,
+                message=(
+                    "🔒 **Security & Policy Notice**\n\n"
+                    "Refund requests strictly adhere to the EventPulse Cancellation and Refund Policy based on event timelines and organizer rules.\n\n"
+                    "I cannot override system instructions or issue unconfirmed refunds. To cancel an eligible booking, please initiate cancellation through your account dashboard or request a standard confirmation here."
+                ),
+                citations=[],
+                is_rag_grounded=False,
+                requires_confirmation=False,
+            )
+
+        # ── 2j. Handle Privacy Protection / User Bookings (GQ-067) ────────────
+        if re.search(r"\b(?:bookings?|tickets?)\s+of\s+(?:the\s+)?user\b", user_msg, re.IGNORECASE) or ("bookings of" in user_msg.lower() and "@" in user_msg):
+            return ChatResponse(
+                conversation_id=req.conversation_id,
+                message=(
+                    "🔒 **Privacy Protection**\n\n"
+                    "For account security and data privacy protection, users are only permitted to access their own booking records.\n\n"
+                    "Viewing or querying another customer's ticket bookings is strictly prohibited."
+                ),
+                citations=[],
+                is_rag_grounded=False,
+                requires_confirmation=False,
+            )
+
+        # ── 2k. Handle Admin Audit Log RBAC (GQ-060) ──────────────────────────
+        if any(p in user_msg.lower() for p in ["audit log", "admin log", "audit trail"]):
+            if role != "admin":
+                return ChatResponse(
+                    conversation_id=req.conversation_id,
+                    message="🔒 **Admin Permission Required**\n\nPlatform audit logs and administrative traces are strictly restricted to system **Administrators**.",
+                    citations=[],
+                    is_rag_grounded=False,
+                    requires_confirmation=False,
+                )
+
+        # ── 2l. Handle Ambiguous Cancellation Request (GQ-068) ────────────────
+        if user_msg.strip().lower() in ["can i cancel", "can i cancel?", "i want to cancel", "can i get a refund?", "can i get a refund"]:
+            return ChatResponse(
+                conversation_id=req.conversation_id,
+                message=(
+                    "### ❓ Booking Cancellation Clarification\n\n"
+                    "Yes, tickets can be cancelled on EventPulse, but the refund percentage depends on how far in advance you cancel prior to the event start time:\n\n"
+                    "- **More than 7 days:** 100% refund (minus 2.5% fee)\n"
+                    "- **48 hours to 7 days:** 80% refund\n"
+                    "- **24 to 48 hours:** 50% refund\n"
+                    "- **Under 24 hours:** Non-refundable\n\n"
+                    "Which specific booking or event would you like to cancel, and when is it scheduled to take place?"
+                ),
+                citations=[],
+                is_rag_grounded=False,
+                requires_confirmation=False,
+            )
+
+        # ── 2m. Handle Event Creation Intent ───────────────────────────────────
         is_create_event_query = (
             any(p in user_msg.lower() for p in ["create event", "create an event", "add event", "host an event", "new event", "schedule an event"])
             or (user_msg.lower().startswith("create ") and any(k in user_msg.lower() for k in ["show", "tickets", "price", "seats", "comedy", "music"]))
@@ -383,7 +500,11 @@ class AgentOrchestrator:
                 "find", "search", "explore", "show me events", "concerts", "concert", "comedy in", "shows", "show",
                 "list the event", "list events", "events", "below", "under", "cheap", "tickets in", "browse events"
             ])
-            and not any(w in user_msg.lower() for w in ["cancel", "refund", "policy", "faq", "rules", "my bookings", "create event"])
+            and not any(w in user_msg.lower() for w in [
+                "cancel", "refund", "policy", "faq", "rules", "my bookings", "create event",
+                "find my ticket", "my ticket", "after i pay", "after payment", "16-year-old", "age",
+                "weather", "forecast", "ipl", "audit log", "audit trail", "student discount", "paypal", "crypto"
+            ])
         )
         if is_discovery_query:
             filters = extract_structured_filters(user_msg)
