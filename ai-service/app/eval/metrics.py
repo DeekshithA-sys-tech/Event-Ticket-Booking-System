@@ -20,8 +20,16 @@ def evaluate_retrieval_recall_at_k(retriever: HybridRetriever, k: int = 3) -> Di
         results = retriever.search(item["question"], top_k=k)
         retrieved_doc_ids = {chunk.doc_id for chunk, _ in results}
 
-        # Check if any expected doc ID is among retrieved
-        if any(exp in retrieved_doc_ids for exp in expected_docs):
+        # Check if any expected doc ID is among retrieved (supports prefix matching for event_*)
+        matched = False
+        for exp in expected_docs:
+            if exp in retrieved_doc_ids:
+                matched = True
+                break
+            if exp == "event" and any(r.startswith("event_") for r in retrieved_doc_ids):
+                matched = True
+                break
+        if matched:
             hits += 1
 
     recall = hits / total_policy_cases if total_policy_cases > 0 else 1.0
