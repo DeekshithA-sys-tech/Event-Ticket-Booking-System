@@ -18,6 +18,8 @@ class Settings(BaseSettings):
     BASE_DIR: Path = Path(__file__).resolve().parent.parent.parent
     KNOWLEDGE_DIR: Path = BASE_DIR.parent / "knowledge"
     DATA_DIR: Path = BASE_DIR / "data"
+    CHROMA_PERSIST_DIR: Path = DATA_DIR / "chroma_db"
+    CHROMA_COLLECTION_NAME: str = "eventpulse_vectors"
 
     # RAG Retrieval Configuration
     TOP_K_RETRIEVAL: int = 5
