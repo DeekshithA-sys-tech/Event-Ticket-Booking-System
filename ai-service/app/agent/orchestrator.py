@@ -629,20 +629,64 @@ class AgentOrchestrator:
 
     def _format_analytics_response(self, conv_id: str, result: Dict[str, Any]) -> ChatResponse:
         data = result.get("data", {}) if isinstance(result.get("data"), dict) else result
-        revenue = data.get("totalRevenue", data.get("revenue", 0))
-        tickets = data.get("totalTicketsSold", data.get("ticketsSold", 0))
-        events_cnt = data.get("totalEvents", data.get("activeEvents", 0))
-        rev_str = f"₹{revenue:,.2f}" if isinstance(revenue, (int, float)) else f"₹{revenue}"
 
-        msg = (
-            f"### 📊 Organizer Dashboard Overview\n\n"
-            f"- 💰 **Total Revenue**: {rev_str}\n"
-            f"- 🎟️ **Tickets Sold**: {tickets}\n"
-            f"- 🎪 **Total Events**: {events_cnt}\n"
-        )
+        # 1. Parse Revenue (handles both scalar numbers and Express overview dict: {total, thisMonth, lastMonth, changePercent})
+        rev_raw = data.get("revenue", data.get("totalRevenue", 0))
+        if isinstance(rev_raw, dict):
+            total_rev = rev_raw.get("total", 0)
+            this_month = rev_raw.get("thisMonth")
+            last_month = rev_raw.get("lastMonth")
+            growth = rev_raw.get("changePercent")
+        else:
+            total_rev = rev_raw if isinstance(rev_raw, (int, float)) else 0
+            this_month = None
+            last_month = None
+            growth = None
+
+        rev_str = f"₹{total_rev:,.2f}" if isinstance(total_rev, (int, float)) else f"₹{total_rev}"
+
+        # 2. Parse Bookings / Tickets
+        bookings_raw = data.get("bookings", data.get("totalTicketsSold", data.get("ticketsSold", 0)))
+        if isinstance(bookings_raw, dict):
+            total_bookings = bookings_raw.get("total", 0)
+            attendees = bookings_raw.get("uniqueAttendees")
+        else:
+            total_bookings = bookings_raw
+            attendees = None
+
+        # 3. Parse Events
+        events_raw = data.get("events", data.get("totalEvents", data.get("activeEvents", 0)))
+        if isinstance(events_raw, dict):
+            total_events = events_raw.get("total", 0)
+            published = events_raw.get("published")
+            upcoming = events_raw.get("upcoming")
+        else:
+            total_events = events_raw
+            published = None
+            upcoming = None
+
+        lines = [
+            "### 📊 Organizer Dashboard Overview\n",
+            f"- 💰 **Total Revenue**: {rev_str}",
+        ]
+        if this_month is not None and last_month is not None:
+            growth_sign = f"({growth:+.0f}% change)" if growth is not None else ""
+            lines.append(f"  - *This Month:* ₹{this_month:,.2f} | *Last Month:* ₹{last_month:,.2f} {growth_sign}".strip())
+
+        if attendees is not None:
+            lines.append(f"- 🎟️ **Tickets Sold**: {total_bookings} tickets ({attendees} unique attendees)")
+        elif total_bookings:
+            lines.append(f"- 🎟️ **Tickets Sold**: {total_bookings}")
+
+        if published is not None:
+            extra = f" ({upcoming} upcoming)" if upcoming else ""
+            lines.append(f"- 🎪 **Total Events**: {total_events} ({published} published live{extra})")
+        elif total_events:
+            lines.append(f"- 🎪 **Total Events**: {total_events}")
+
         return ChatResponse(
             conversation_id=conv_id,
-            message=msg,
+            message="\n".join(lines),
             requires_confirmation=False,
             tool_calls_used=[{"name": "get_organizer_analytics"}],
         )
@@ -681,17 +725,14 @@ class AgentOrchestrator:
                 tool_calls_used=[{"name": "list_users"}],
             )
 
-        lines = [
-            f"### 👥 Registered Platform Users ({total} total)\n",
-            "| Name | Email | Role | Status |",
-            "|---|---|---|---|",
-        ]
-        for u in users[:10]:
-            name = u.get("name", "N/A")
+        lines = [f"### 👥 Registered Platform Users ({total} total)\n"]
+        for u in users[:15]:
+            name = u.get("name", "User")
             email = u.get("email", "N/A")
             u_role = u.get("role", "customer").capitalize()
-            status = "Active" if u.get("isActive", True) else "Inactive"
-            lines.append(f"| {name} | `{email}` | **{u_role}** | {status} |")
+            status_text = "Active" if u.get("isActive", True) else "Inactive"
+            role_icon = "🛡️" if u_role == "Admin" else "🎪" if u_role == "Organizer" else "👤"
+            lines.append(f"- {role_icon} **{name}** (`{email}`)\n  - Role: **{u_role}** • Status: `{status_text}`")
 
         return ChatResponse(
             conversation_id=conv_id,
