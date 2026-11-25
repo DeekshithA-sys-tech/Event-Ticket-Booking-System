@@ -144,22 +144,46 @@ export const AIChatWidget = () => {
     promptChips.push({ label: '📊 Sales Overview', query: 'Show sales analytics and revenue' });
   }
 
-  // Simple markdown-like text parser for bullet points, bold, and code
+  // Enhanced markdown-like text parser for bullet points, nested sub-bullets, tables, bold, and code
   const renderFormattedText = (text) => {
     const lines = text.split('\n');
     return lines.map((line, idx) => {
       let formatted = line;
       // Bold
       formatted = formatted.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+      // Italic
+      formatted = formatted.replace(/(?<!\*)\*([^*]+)\*(?!\*)/g, '<em>$1</em>');
       // Inline code
-      formatted = formatted.replace(/`([^`]+)`/g, '<code class="px-1 py-0.5 bg-slate-200 dark:bg-slate-700 rounded text-xs font-mono break-all [overflow-wrap:anywhere]">$1</code>');
+      formatted = formatted.replace(/`([^`]+)`/g, '<code class="px-1 py-0.5 bg-slate-200 dark:bg-slate-700 rounded text-[11px] font-mono break-all [overflow-wrap:anywhere]">$1</code>');
+
+      // Table separator row (e.g. |---|---|)
+      if (line.trim().startsWith('|') && line.includes('---')) {
+        return <div key={idx} className="my-1 border-t border-slate-200 dark:border-slate-700" />;
+      }
+
+      // Markdown table row fallback
+      if (line.trim().startsWith('|') && line.trim().endsWith('|')) {
+        const cells = line.split('|').map((c) => c.trim()).filter((c) => c.length > 0);
+        return (
+          <div key={idx} className="flex flex-wrap items-center gap-1.5 py-0.5 text-xs">
+            {cells.map((cell, cIdx) => (
+              <span
+                key={cIdx}
+                className={`px-1.5 py-0.5 rounded text-[11px] ${cIdx === 0 ? 'font-semibold text-slate-900 dark:text-slate-100' : 'text-slate-600 dark:text-slate-400'}`}
+                dangerouslySetInnerHTML={{ __html: cell.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>').replace(/`([^`]+)`/g, '<code class="px-1 py-0.5 bg-slate-100 dark:bg-slate-700 rounded text-[10px] font-mono">$1</code>') }}
+              />
+            ))}
+          </div>
+        );
+      }
 
       if (line.trim().startsWith('- ') || line.trim().startsWith('* ')) {
+        const isIndented = line.startsWith('  ') || line.startsWith('\t');
         return (
           <li
             key={idx}
-            className="ml-4 list-disc text-xs leading-relaxed break-words [overflow-wrap:anywhere]"
-            dangerouslySetInnerHTML={{ __html: formatted.replace(/^[-*]\s*/, '') }}
+            className={`${isIndented ? 'ml-6 list-[circle] text-[11px] text-slate-600 dark:text-slate-400' : 'ml-3 list-disc text-xs text-slate-800 dark:text-slate-200'} leading-relaxed break-words [overflow-wrap:anywhere]`}
+            dangerouslySetInnerHTML={{ __html: formatted.replace(/^[\s\t]*[-*]\s*/, '') }}
           />
         );
       }
@@ -167,7 +191,7 @@ export const AIChatWidget = () => {
         return (
           <h4
             key={idx}
-            className="font-bold text-sm mt-2 mb-1 break-words [overflow-wrap:anywhere]"
+            className="font-bold text-sm mt-2 mb-1 text-slate-900 dark:text-slate-100 break-words [overflow-wrap:anywhere]"
             dangerouslySetInnerHTML={{ __html: formatted.replace(/^###\s*/, '') }}
           />
         );
