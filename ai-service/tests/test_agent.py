@@ -338,6 +338,40 @@ async def test_admin_list_users_tool_dispatch():
         assert "admin@eventpulse.com" in data["message"]
 
 
+@pytest.mark.asyncio
+async def test_admin_list_users_direct_array_response():
+    """Verify list_users works with Express's native format: data is a direct list of users."""
+    mock_users_array = [
+        {"name": "Admin User", "email": "admin@eventpulse.com", "role": "admin", "isActive": True},
+        {"name": "Organizer 1", "email": "org1@eventpulse.com", "role": "organizer", "isActive": True},
+        {"name": "Customer 1", "email": "cust1@eventpulse.com", "role": "customer", "isActive": True},
+    ]
+
+    with patch("app.agent.http_client.express_client.get", new_callable=AsyncMock) as mock_get:
+        mock_get.return_value = {
+            "success": True,
+            "data": mock_users_array,
+            "meta": {"total": 6, "page": 1, "limit": 10},
+        }
+
+        # Test both singular and plural forms
+        for msg in ["list all the user", "list all the users", "show users"]:
+            req = {
+                "conversation_id": "test-list-users-array",
+                "message": msg,
+                "user": {"role": "admin", "is_authenticated": True, "email": "admin@eventpulse.com"},
+                "auth_token": "admin-jwt-token",
+            }
+            response = client.post("/api/chat", json=req)
+            assert response.status_code == 200
+            data = response.json()
+            assert "Registered Platform Users (6 total)" in data["message"]
+            assert "Admin User" in data["message"]
+            assert "Organizer 1" in data["message"]
+            assert "Customer 1" in data["message"]
+
+
+
 def test_admin_list_users_forbidden_for_customer():
     req = {
         "conversation_id": "test-list-users-customer",
