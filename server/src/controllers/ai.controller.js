@@ -48,22 +48,50 @@ export const chatWithAI = asyncHandler(async (req, res) => {
   };
 
   try {
-    const aiResponse = await fetch(`${AI_SERVICE_URL.replace(/\/$/, '')}/api/chat`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(payload),
-    });
+    let aiResponse;
+    let attempts = 0;
+    const maxAttempts = 2;
+
+    while (attempts < maxAttempts) {
+      attempts++;
+      try {
+        aiResponse = await fetch(`${AI_SERVICE_URL.replace(/\/$/, '')}/api/chat`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(payload),
+        });
+
+        // If service is temporarily warming up (503), wait and retry once
+        if (aiResponse.status === 503 && attempts < maxAttempts) {
+          await new Promise((resolve) => setTimeout(resolve, 1200));
+          continue;
+        }
+
+        break;
+      } catch (err) {
+        if (attempts < maxAttempts) {
+          await new Promise((resolve) => setTimeout(resolve, 1200));
+          continue;
+        }
+        throw err;
+      }
+    }
 
     if (!aiResponse.ok) {
       const errText = await aiResponse.text();
       logger.warn(`[AI Controller] AI Service responded with status ${aiResponse.status}: ${errText}`);
 
+      const fallbackMsg =
+        aiResponse.status === 503
+          ? '⏳ EventPulse AI is warming up its neural engine. Please try sending your message again in a moment.'
+          : '🤖 I encountered a momentary issue processing your request. Please try rephrasing or asking again.';
+
       return res.status(HTTP_STATUS.OK).json(
         new ApiResponse(HTTP_STATUS.OK, 'AI assistant response generated.', {
           conversation_id,
-          message: '🤖 I encountered a momentary issue processing your request. Please try rephrasing or asking again.',
+          message: fallbackMsg,
           requires_confirmation: false,
           pending_action: null,
           tool_calls_used: [],
