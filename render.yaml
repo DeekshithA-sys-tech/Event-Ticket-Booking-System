@@ -1,0 +1,55 @@
+services:
+  # ── Express API Gateway (Node.js) ──
+  - type: web
+    name: eventpulse-api
+    runtime: node
+    plan: free
+    rootDir: server
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: CLIENT_URL
+        sync: false # e.g. https://your-project.vercel.app
+      - key: MONGODB_URI
+        sync: false # MongoDB Atlas connection string
+      - key: REDIS_URL
+        sync: false # Upstash Redis connection string (rediss://...)
+      - key: BULLMQ_REDIS_URL
+        sync: false
+      - key: JWT_ACCESS_SECRET
+        generateValue: true
+      - key: JWT_REFRESH_SECRET
+        generateValue: true
+      - key: JWT_ACCESS_EXPIRY
+        value: 15m
+      - key: JWT_REFRESH_EXPIRY
+        value: 7d
+      - key: AI_SERVICE_URL
+        fromService:
+          type: web
+          name: eventpulse-ai
+          property: host
+      - key: RATE_LIMIT_MAX
+        value: 100
+      - key: RATE_LIMIT_WINDOW_MS
+        value: 900000
+
+  # ── Python AI Microservice (FastAPI + RAG Agent) ──
+  - type: web
+    name: eventpulse-ai
+    runtime: python
+    plan: free
+    rootDir: ai-service
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: LLM_PROVIDER
+        value: auto
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
