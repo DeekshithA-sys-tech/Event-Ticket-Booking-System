@@ -504,3 +504,95 @@ def test_adversarial_prompt_injection_refusal():
     assert "cannot override" in msg or "policy" in msg
 
 
+@pytest.mark.asyncio
+async def test_book_seats_in_quoted_event():
+    """Regression test: 'book 2 seats in \"summer rock\"' initiates booking confirmation with allocated seats."""
+    mock_events = [
+        {
+            "_id": "6b07c05ffa71f90899b306e4",
+            "title": "summer rock",
+            "ticketPrice": 1500,
+            "availableSeats": 197,
+            "city": "mumbai",
+        }
+    ]
+    mock_seat_layout = {
+        "eventId": "6b07c05ffa71f90899b306e4",
+        "title": "summer rock",
+        "availableSeats": 197,
+        "seatLayout": [
+            {
+                "row": "A",
+                "seats": [
+                    {"seatId": "A-1", "seatNumber": 1, "status": "booked"},
+                    {"seatId": "A-2", "seatNumber": 2, "status": "available"},
+                    {"seatId": "A-3", "seatNumber": 3, "status": "available"},
+                ],
+            }
+        ],
+    }
+
+    with patch("app.agent.http_client.express_client.get", new_callable=AsyncMock) as mock_get:
+        # Mock search and check_availability
+        def side_effect(url, **kwargs):
+            if "/search/events/" in url and "/seats" in url:
+                return {"success": True, "data": mock_seat_layout}
+            elif "/search/events" in url:
+                return {"success": True, "data": mock_events}
+            return {"success": False}
+
+        mock_get.side_effect = side_effect
+
+        req = {
+            "conversation_id": "test-book-seats-quotes",
+            "message": 'book 2 seats in "summer rock"',
+            "user": {"role": "customer"},
+        }
+        response = client.post("/api/chat", json=req)
+        assert response.status_code == 200
+        data = response.json()
+        assert data["requires_confirmation"] is True
+        assert data["pending_action"]["action"] == "create_booking"
+        assert data["pending_action"]["payload"]["event_id"] == "6b07c05ffa71f90899b306e4"
+        assert data["pending_action"]["payload"]["seat_ids"] == ["A-2", "A-3"]
+        assert "summer rock" in data["message"]
+        assert "₹3,000.00" in data["message"] or "3000" in data["message"]
+        assert "A-2, A-3" in data["message"]
+
+        # Also test unquoted "book 2 seats in summer rock"
+        req2 = {
+            "conversation_id": "test-book-seats-unquoted",
+            "message": "book 2 seats in summer rock",
+            "user": {"role": "customer"},
+        }
+        res2 = client.post("/api/chat", json=req2)
+        assert res2.status_code == 200
+        data2 = res2.json()
+        assert data2["requires_confirmation"] is True
+        assert data2["pending_action"]["action"] == "create_booking"
+
+        # Also test "Book me 2 seats for Jazz Night" (GQ-056)
+        req3 = {
+            "conversation_id": "test-book-seats-gq056",
+            "message": "Book me 2 seats for Jazz Night",
+            "user": {"role": "customer"},
+        }
+        res3 = client.post("/api/chat", json=req3)
+        assert res3.status_code == 200
+        data3 = res3.json()
+        assert data3["requires_confirmation"] is True
+
+        # Ensure "Do I need an account to book tickets?" is NOT intercepted as a booking action
+        req4 = {
+            "conversation_id": "test-booking-faq-not-intercepted",
+            "message": "Do I need an account to book tickets?",
+            "user": {"role": "customer"},
+        }
+        res4 = client.post("/api/chat", json=req4)
+        assert res4.status_code == 200
+        data4 = res4.json()
+        assert data4.get("requires_confirmation") is not True
+
+
+
+

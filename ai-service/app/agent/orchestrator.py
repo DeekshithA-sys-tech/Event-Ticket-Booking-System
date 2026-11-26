@@ -458,25 +458,118 @@ class AgentOrchestrator:
                 pending_action=pending,
             )
 
-        # Natural booking request: e.g. "book 3 tickets" or "Live Jazz book 3 tickets anywhere"
-        natural_book_match = re.search(r"(?:book|reserve|lock)\s+(\d+)\s+tickets?", user_msg, re.IGNORECASE)
-        if natural_book_match:
-            qty = int(natural_book_match.group(1))
-            candidate_title = re.sub(r"(?:book|reserve|lock)\s+\d+\s+tickets?(?:\s+any\s*where)?", "", user_msg, flags=re.IGNORECASE).strip(" ,.-0123456789")
-            target_event = None
-            if candidate_title and len(candidate_title) > 2:
-                res = await tool_registry.execute("search_events", {"q": candidate_title}, token=token, user=user_ctx)
-                evs = res.get("data", [])
-                if isinstance(evs, dict) and "events" in evs:
-                    evs = evs["events"]
-                if isinstance(evs, list) and evs:
-                    target_event = evs[0]
+        # Natural booking request: e.g. "book 2 seats in 'summer rock'", "book 3 tickets", "Book me 2 seats for Jazz Night."
+        is_policy_inquiry = any(
+            w in user_msg.lower()
+            for w in [
+                "how do i", "how can i", "how to", "do i need", "can i", "is it possible",
+                "policy", "faq", "rules", "refund", "cancel", "what if", "timeline",
+                "if i cancel", "i booked", "already booked", "booked previously"
+            ]
+        )
+        if not is_policy_inquiry:
+            word_nums = {
+                "a": 1, "an": 1, "one": 1, "two": 2, "couple": 2, "three": 3,
+                "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10
+            }
+            num_pat = r"(\d+|one|two|three|four|five|six|seven|eight|nine|ten|a|an|couple(?:\s+of)?)"
+            item_pat = r"(?:tickets?|seats?|passes?)"
+            action_pat = r"(?:book(?:\s+me)?|reserve|lock|hold|buy|order)"
 
-            if target_event:
+            m_a = re.search(rf"\b{action_pat}\s+{num_pat}\s+{item_pat}\b", user_msg, re.IGNORECASE)
+            m_b = re.search(rf"\b{action_pat}\s+{item_pat}\b", user_msg, re.IGNORECASE)
+            m_c = re.search(rf"\b{num_pat}\s+{item_pat}.*\b{action_pat}\b", user_msg, re.IGNORECASE)
+
+            if m_a or m_b or m_c:
+                qty = 1
+                if m_a:
+                    raw_q = m_a.group(1).lower().strip()
+                    qty = word_nums.get(raw_q, int(raw_q) if raw_q.isdigit() else 1)
+                elif m_c:
+                    raw_q = m_c.group(1).lower().strip()
+                    qty = word_nums.get(raw_q, int(raw_q) if raw_q.isdigit() else 1)
+                elif m_b:
+                    qty = 2 if "seats" in user_msg.lower() or "tickets" in user_msg.lower() else 1
+
+                # Extract candidate event title
+                quote_match = re.search(r'["\']([^"\']+)["\']', user_msg)
+                if quote_match and len(quote_match.group(1).strip()) > 1:
+                    candidate_title = quote_match.group(1).strip()
+                else:
+                    c_title = re.sub(r"^(?:please\s+|can\s+you\s+|i\s+want\s+to\s+|i'd\s+like\s+to\s+|could\s+you\s+)?", "", user_msg, flags=re.IGNORECASE)
+                    c_title = re.sub(rf"\b{action_pat}\s+(?:{num_pat}\s+)?{item_pat}\b", "", c_title, flags=re.IGNORECASE)
+                    c_title = re.sub(rf"\b{num_pat}\s+{item_pat}.*\b{action_pat}\b", "", c_title, flags=re.IGNORECASE)
+                    c_title = re.sub(r"\b(?:in|for|at|to|of|on|event|anywhere|please)\b", "", c_title, flags=re.IGNORECASE)
+                    candidate_title = c_title.strip(" ,.-0123456789\"'?!")
+
+                target_event = None
+                if candidate_title and len(candidate_title) >= 2:
+                    res = await tool_registry.execute("search_events", {"q": candidate_title}, token=token, user=user_ctx)
+                    evs = res.get("data", [])
+                    if isinstance(evs, dict) and "events" in evs:
+                        evs = evs["events"]
+                    if isinstance(evs, list) and evs:
+                        for ev in evs:
+                            if candidate_title.lower() in ev.get("title", "").lower():
+                                target_event = ev
+                                break
+                        if not target_event:
+                            target_event = evs[0]
+
+                if not candidate_title or len(candidate_title) < 2:
+                    return ChatResponse(
+                        conversation_id=req.conversation_id,
+                        message=(
+                            f"🎟️ Which event would you like to book {qty} ticket(s) for?\n\n"
+                            f"Please specify the event title, or browse upcoming events using **'Find Events'**."
+                        ),
+                        requires_confirmation=False,
+                    )
+
+                if not target_event:
+                    return ChatResponse(
+                        conversation_id=req.conversation_id,
+                        message=(
+                            f"🔍 Could not find an active event matching **'{candidate_title}'** in the catalog.\n\n"
+                            f"Please check the event title or use **'Find Events'** to view currently available shows."
+                        ),
+                        requires_confirmation=False,
+                    )
+
                 ev_id = str(target_event.get("_id", ""))
                 ev_title = target_event.get("title", "Event")
                 price = float(target_event.get("ticketPrice", 200))
-                auto_seats = [f"A-{i+1}" for i in range(qty)]
+                avail_seats = target_event.get("availableSeats", 0)
+
+                # Attempt fetching actual live available seat IDs
+                auto_seats = []
+                avail_res = await tool_registry.execute("check_availability", {"event_id": ev_id}, token=token, user=user_ctx)
+                if avail_res.get("success") and isinstance(avail_res.get("data"), dict):
+                    layout = avail_res["data"].get("seatLayout", [])
+                    avail_seats = avail_res["data"].get("availableSeats", avail_seats)
+                    for row in layout:
+                        for s in row.get("seats", []):
+                            if s.get("status") == "available":
+                                auto_seats.append(s.get("seatId"))
+                                if len(auto_seats) == qty:
+                                    break
+                        if len(auto_seats) == qty:
+                            break
+
+                if len(auto_seats) < qty:
+                    auto_seats = [f"A-{i+1}" for i in range(qty)]
+
+                if avail_seats < qty:
+                    return ChatResponse(
+                        conversation_id=req.conversation_id,
+                        message=(
+                            f"⚠️ **Insufficient Seats Available**\n\n"
+                            f"You requested {qty} seat(s) for **{ev_title}**, but only {avail_seats} seat(s) are currently available.\n\n"
+                            f"Please select fewer seats or browse other upcoming events."
+                        ),
+                        requires_confirmation=False,
+                    )
+
                 pending = PendingAction(
                     action="create_booking",
                     payload={"event_id": ev_id, "seat_ids": auto_seats},
