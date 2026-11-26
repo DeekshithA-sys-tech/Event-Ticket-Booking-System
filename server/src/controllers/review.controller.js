@@ -66,48 +66,49 @@ export const getEventReviews = asyncHandler(async (req, res) => {
 
 export const createReview = asyncHandler(async (req, res) => {
   const userId = req.user._id;
-  const { eventId, rating, title, body } = req.body;
+  const { eventId, rating, title, body, comment } = req.body;
+  const reviewContent = (body || comment || '').trim();
+
+  if (!reviewContent) {
+    throw new ValidationError('Review content is required.');
+  }
 
   // 1. Check event exists
   const event = await eventRepo.findEventById(eventId);
   if (!event) throw new NotFoundError(MESSAGES.EVENT.NOT_FOUND);
 
-  // 2. Check event has already happened
-  if (new Date(event.date) > new Date()) {
+  // 2. Check the user has a confirmed booking for this event (or is organizer/admin)
+  const isPrivileged = req.user.role === 'admin' || req.user.role === 'organizer';
+  const Booking = (await import('../models/booking.model.js')).default;
+  const qualifyingBooking = await Booking.findOne({
+    user: userId,
+    event: eventId,
+    status: 'confirmed',
+  }).lean();
+
+  if (!isPrivileged && !qualifyingBooking) {
     throw new ValidationError(
-      'You can only review events that have already taken place.'
+      'You can only review events for which you have a confirmed ticket booking.'
     );
   }
 
-  // 3. Check the user has a confirmed booking for this event
-  const hasBooking = await bookingRepo.userHasBookingForEvent(userId, eventId);
-  if (!hasBooking) {
-    throw new ValidationError(MESSAGES.REVIEW.NOT_ELIGIBLE);
-  }
-
-  // 4. Find the qualifying booking
-  const { bookings } = await bookingRepo.findBookingsByUser(userId, { limit: 100 });
-  const qualifyingBooking = bookings.find(
-    (b) => b.event?.toString() === eventId.toString() && b.status === 'confirmed'
-  );
-
-  // 5. Check for duplicate review
+  // 3. Check for duplicate review
   const existing = await reviewRepo.findUserReviewForEvent(userId, eventId);
   if (existing) {
     throw new ConflictError(MESSAGES.REVIEW.ALREADY_REVIEWED);
   }
 
-  // 6. Create the review
+  // 4. Create the review
   const review = await reviewRepo.createReview({
     user: userId,
     event: eventId,
-    booking: qualifyingBooking?._id || qualifyingBooking?.id,
+    booking: qualifyingBooking?._id || null,
     rating,
     title: title || null,
-    body,
+    body: reviewContent,
   });
 
-  // 7. Invalidate caches
+  // 5. Invalidate caches
   await invalidateReviewCaches(eventId);
 
   logger.info(`[Review] User ${userId} reviewed event ${eventId} → ${rating}★`);

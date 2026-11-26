@@ -81,11 +81,13 @@ export const EventDetailPage = () => {
       const res = await reviewService.createReview({
         eventId: id,
         rating: Number(newRating),
+        body: newComment,
         comment: newComment,
       });
 
       toast.success('Review submitted successfully!');
-      setReviews([res.data, ...reviews]);
+      const newReview = res.data || res;
+      setReviews([newReview, ...reviews]);
       setReviewModalOpen(false);
       setNewComment('');
     } catch (_err) {
@@ -234,14 +236,15 @@ export const EventDetailPage = () => {
                   <div key={rev._id} className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-2">
                     <div className="flex items-center justify-between">
                       <span className="text-xs font-bold text-slate-900">
-                        {typeof rev.user === 'object' ? rev.user.name : 'Verified Buyer'}
+                        {typeof rev.user === 'object' ? rev.user?.name || rev.user?.email || 'Verified Buyer' : 'Verified Buyer'}
                       </span>
                       <div className="flex items-center gap-1 text-xs text-amber-500 font-semibold">
                         <FiStar className="w-3.5 h-3.5 fill-amber-500" />
                         <span>{rev.rating}/5</span>
                       </div>
                     </div>
-                    <p className="text-xs text-slate-600 leading-relaxed">{rev.comment}</p>
+                    {rev.title && <h4 className="text-xs font-bold text-slate-800">{rev.title}</h4>}
+                    <p className="text-xs text-slate-600 leading-relaxed">{rev.body || rev.comment}</p>
                   </div>
                 ))}
               </div>
@@ -323,6 +326,9 @@ export const EventDetailPage = () => {
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
           <div className="bg-white p-6 sm:p-8 rounded-3xl border border-slate-200 shadow-2xl max-w-md w-full space-y-6">
             <h3 className="text-lg font-bold text-slate-900">Write a Review</h3>
+            <p className="text-xs text-slate-500">
+              Share your genuine feedback with other attendees. Verified reviews require a confirmed ticket booking.
+            </p>
 
             <form onSubmit={handleCreateReview} className="space-y-4">
               <div>

@@ -559,6 +559,17 @@ class AgentOrchestrator:
                 if len(auto_seats) < qty:
                     auto_seats = [f"A-{i+1}" for i in range(qty)]
 
+                if qty > 6:
+                    return ChatResponse(
+                        conversation_id=req.conversation_id,
+                        message=(
+                            f"⚠️ **Ticket Limit Exceeded (Maximum 6 Tickets)**\n\n"
+                            f"To prevent scalping and ensure fair access, EventPulse policy limits transactions to a maximum of **6 tickets per booking**.\n\n"
+                            f"For larger groups, please book in separate transactions of up to 6 tickets, or contact `corporate@eventpulse.io` for enterprise group reservations."
+                        ),
+                        requires_confirmation=False,
+                    )
+
                 if avail_seats < qty:
                     return ChatResponse(
                         conversation_id=req.conversation_id,

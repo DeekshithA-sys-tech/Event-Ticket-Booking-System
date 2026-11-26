@@ -23,24 +23,36 @@ import { z } from 'zod';
 
 // ─── Create Review ────────────────────────────────────────────────────────────
 export const createReviewSchema = z.object({
-  body: z.object({
-    eventId: z.string({ required_error: 'Event ID is required' }).min(1),
-    rating: z
-      .number({ required_error: 'Rating is required' })
-      .int('Rating must be a whole number')
-      .min(1, 'Rating must be at least 1')
-      .max(5, 'Rating cannot exceed 5'),
-    title: z
-      .string()
-      .trim()
-      .max(150, 'Review title cannot exceed 150 characters')
-      .optional(),
-    body: z
-      .string({ required_error: 'Review body is required' })
-      .trim()
-      .min(10, 'Review must be at least 10 characters')
-      .max(2000, 'Review cannot exceed 2000 characters'),
-  }),
+  body: z
+    .object({
+      eventId: z.string({ required_error: 'Event ID is required' }).min(1),
+      rating: z
+        .number({ required_error: 'Rating is required' })
+        .int('Rating must be a whole number')
+        .min(1, 'Rating must be at least 1')
+        .max(5, 'Rating cannot exceed 5'),
+      title: z
+        .string()
+        .trim()
+        .max(150, 'Review title cannot exceed 150 characters')
+        .optional(),
+      body: z
+        .string()
+        .trim()
+        .min(3, 'Review must be at least 3 characters')
+        .max(2000, 'Review cannot exceed 2000 characters')
+        .optional(),
+      comment: z
+        .string()
+        .trim()
+        .min(3, 'Review must be at least 3 characters')
+        .max(2000, 'Review cannot exceed 2000 characters')
+        .optional(),
+    })
+    .refine((data) => data.body || data.comment, {
+      message: 'Review content is required (minimum 3 characters)',
+      path: ['body'],
+    }),
 });
 
 // ─── Update Review ────────────────────────────────────────────────────────────
