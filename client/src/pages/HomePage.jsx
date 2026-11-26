@@ -7,6 +7,22 @@ import { searchService } from '../services/searchService.js';
 import { EventCard } from '../components/EventCard.jsx';
 import { EventCardSkeleton } from '../components/skeletons/EventCardSkeleton.jsx';
 
+const CATEGORY_ICONS = {
+  music: '🎵',
+  film: '🎬',
+  smile: '🎭',
+  comedy: '🎭',
+  briefcase: '💼',
+  conference: '💼',
+  sparkles: '✨',
+  festival: '✨',
+  activity: '⚽',
+  sports: '⚽',
+  book: '📚',
+  theater: '🎪',
+  tech: '💻',
+};
+
 export const HomePage = () => {
   const [events, setEvents] = useState([]);
   const [trending, setTrending] = useState([]);
@@ -116,7 +132,7 @@ export const HomePage = () => {
                   : 'border-slate-200/90 text-slate-700 hover:border-indigo-300 hover:text-indigo-600'
               }`}
             >
-              <span className="text-2xl">{cat.icon || '🎟️'}</span>
+              <span className="text-2xl">{CATEGORY_ICONS[cat.icon] || CATEGORY_ICONS[cat.slug] || (cat.icon && cat.icon.length <= 4 ? cat.icon : '🎟️')}</span>
               <span className="text-xs font-semibold line-clamp-1">{cat.name}</span>
             </button>
           ))}

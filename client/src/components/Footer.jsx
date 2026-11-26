@@ -3,6 +3,9 @@ import { HiTicket } from 'react-icons/hi2';
 import { FiHeart, FiGlobe, FiShield, FiSend } from 'react-icons/fi';
 
 export const Footer = () => {
+  const apiDocsUrl = (import.meta.env.VITE_API_URL || import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000/api/v1')
+    .replace(/\/api\/v1\/?$/, '') + '/api-docs';
+
   return (
     <footer className="bg-white border-t border-slate-200 pt-16 pb-8 text-slate-600 mt-auto">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -40,7 +43,7 @@ export const Footer = () => {
                 </Link>
               </li>
               <li>
-                <a href="http://localhost:5000/api-docs" target="_blank" rel="noopener noreferrer" className="hover:text-indigo-600 transition-colors">
+                <a href={apiDocsUrl} target="_blank" rel="noopener noreferrer" className="hover:text-indigo-600 transition-colors">
                   Swagger OpenAPI Docs
                 </a>
               </li>
