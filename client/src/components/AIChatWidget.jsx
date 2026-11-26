@@ -1,27 +1,91 @@
 import { useState, useRef, useEffect } from 'react';
 import { useSelector } from 'react-redux';
 import { useNavigate } from 'react-router-dom';
-import { FiMessageSquare, FiX, FiSend, FiCheck, FiAlertTriangle, FiMinimize2 } from 'react-icons/fi';
+import { FiMessageSquare, FiX, FiSend, FiCheck, FiAlertTriangle, FiMinimize2, FiTrash2 } from 'react-icons/fi';
 import { FaRobot, FaTicketAlt, FaSearch } from 'react-icons/fa';
 import { api } from '../services/api.js';
 
 export const AIChatWidget = () => {
   const navigate = useNavigate();
   const { user } = useSelector((state) => state.auth || {});
+  const currentUserId = user?._id || 'guest';
+  const currentUserRole = user?.role || 'guest';
+
+  const getWelcomeMessage = (role) => ({
+    id: `welcome_${Date.now()}`,
+    role: 'assistant',
+    content:
+      role === 'admin'
+        ? "👋 Hi **Admin**! I'm your **EventPulse AI Assistant**. I can help you monitor system analytics, list registered users, audit platform events, and manage approvals."
+        : role === 'organizer'
+        ? "👋 Hi **Organizer**! I'm your **EventPulse AI Assistant**. I can help you review sales analytics, schedule events, check seat capacity, and manage attendees."
+        : "👋 Hi! I'm the **EventPulse AI Assistant**. I can help you discover live events, check seat maps, view your tickets, and reserve or cancel bookings.",
+    timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+  });
+
   const [isOpen, setIsOpen] = useState(false);
-  const [messages, setMessages] = useState([
-    {
-      id: 'welcome',
-      role: 'assistant',
-      content:
-        "👋 Hi! I'm the **EventPulse AI Assistant**. I can help you discover live events, check seat maps, view your tickets, and reserve or cancel bookings.",
-      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-    },
-  ]);
+  const [messages, setMessages] = useState(() => {
+    try {
+      const saved = localStorage.getItem(`eventpulse_chat_${currentUserId}`);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch {
+      // fallback
+    }
+    return [getWelcomeMessage(currentUserRole)];
+  });
+
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [conversationId] = useState(() => `conv_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`);
+  const [conversationId, setConversationId] = useState(
+    () => `conv_${currentUserId}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`
+  );
   const messagesEndRef = useRef(null);
+
+  // When user logs in, logs out, or switches accounts, isolate their chat session
+  const prevUserIdRef = useRef(currentUserId);
+  useEffect(() => {
+    if (prevUserIdRef.current !== currentUserId) {
+      try {
+        const saved = localStorage.getItem(`eventpulse_chat_${currentUserId}`);
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            setMessages(parsed);
+          } else {
+            setMessages([getWelcomeMessage(currentUserRole)]);
+          }
+        } else {
+          setMessages([getWelcomeMessage(currentUserRole)]);
+        }
+      } catch {
+        setMessages([getWelcomeMessage(currentUserRole)]);
+      }
+      setConversationId(`conv_${currentUserId}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`);
+      prevUserIdRef.current = currentUserId;
+    }
+  }, [currentUserId, currentUserRole]);
+
+  // Persist messages per isolated user
+  useEffect(() => {
+    try {
+      localStorage.setItem(`eventpulse_chat_${currentUserId}`, JSON.stringify(messages));
+    } catch {
+      // ignore
+    }
+  }, [messages, currentUserId]);
+
+  const handleClearChat = () => {
+    try {
+      localStorage.removeItem(`eventpulse_chat_${currentUserId}`);
+    } catch {
+      // ignore
+    }
+    setMessages([getWelcomeMessage(currentUserRole)]);
+    setConversationId(`conv_${currentUserId}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`);
+  };
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -244,6 +308,13 @@ export const AIChatWidget = () => {
               </div>
             </div>
             <div className="flex items-center gap-1">
+              <button
+                onClick={handleClearChat}
+                className="p-1.5 text-white/80 hover:text-white hover:bg-white/10 rounded-lg transition-colors"
+                title="Clear conversation"
+              >
+                <FiTrash2 className="w-4 h-4" />
+              </button>
               <button
                 onClick={() => setIsOpen(false)}
                 className="p-1.5 text-white/80 hover:text-white hover:bg-white/10 rounded-lg transition-colors"

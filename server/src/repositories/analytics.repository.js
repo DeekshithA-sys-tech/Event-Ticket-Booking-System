@@ -78,7 +78,7 @@ export const getOverview = async (organizerId = null) => {
   // ── Run revenue/booking aggregations in parallel ───────────────────────────
   const [bookingStats, thisMonthStats, lastMonthStats, eventStats, ratingStats] =
     await Promise.all([
-      // All-time revenue + booking count + unique attendees
+      // All-time revenue + booking count + unique attendees + tickets sold
       Booking.aggregate([
         { $match: bookingMatch },
         {
@@ -86,6 +86,7 @@ export const getOverview = async (organizerId = null) => {
             _id: null,
             totalRevenue: { $sum: '$totalAmount' },
             totalBookings: { $sum: 1 },
+            totalTicketsSold: { $sum: { $size: { $ifNull: ['$seats', []] } } },
             totalAttendees: { $addToSet: '$user' },
           },
         },
@@ -94,6 +95,7 @@ export const getOverview = async (organizerId = null) => {
             _id: 0,
             totalRevenue: 1,
             totalBookings: 1,
+            totalTicketsSold: 1,
             uniqueAttendees: { $size: '$totalAttendees' },
           },
         },
@@ -174,6 +176,28 @@ export const getOverview = async (organizerId = null) => {
       ? thisMonth > 0 ? 100 : 0
       : Math.round(((thisMonth - lastMonth) / lastMonth) * 100);
 
+  // ── Calculate overall occupancy rate across managed events ─────────────────
+  const eventFilter = organizerId
+    ? { organizer: new mongoose.Types.ObjectId(organizerId) }
+    : {};
+  const capacityStats = await Event.aggregate([
+    { $match: eventFilter },
+    {
+      $group: {
+        _id: null,
+        totalCapacity: { $sum: '$totalSeats' },
+        totalAvailable: { $sum: '$availableSeats' },
+      },
+    },
+  ]);
+
+  const totalCapacity = capacityStats[0]?.totalCapacity || 0;
+  const totalAvailable = capacityStats[0]?.totalAvailable || 0;
+  const totalBookedSeats = Math.max(0, totalCapacity - totalAvailable);
+  const occupancyPercent = totalCapacity > 0
+    ? Math.round((totalBookedSeats / totalCapacity) * 100)
+    : 0;
+
   return {
     revenue: {
       total: bookingStats[0]?.totalRevenue || 0,
@@ -183,8 +207,11 @@ export const getOverview = async (organizerId = null) => {
     },
     bookings: {
       total: bookingStats[0]?.totalBookings || 0,
+      ticketsSold: bookingStats[0]?.totalTicketsSold || totalBookedSeats || 0,
       uniqueAttendees: bookingStats[0]?.uniqueAttendees || 0,
     },
+    occupancyRate: `${occupancyPercent}%`,
+    occupancy: occupancyPercent,
     events: {
       total: totalEvents,
       published: statusMap['published'] || 0,
@@ -202,7 +229,9 @@ export const getOverview = async (organizerId = null) => {
 
 const buildEmptyOverview = () => ({
   revenue: { total: 0, thisMonth: 0, lastMonth: 0, changePercent: 0 },
-  bookings: { total: 0, uniqueAttendees: 0 },
+  bookings: { total: 0, ticketsSold: 0, uniqueAttendees: 0 },
+  occupancyRate: '0%',
+  occupancy: 0,
   events: { total: 0, published: 0, draft: 0, cancelled: 0, completed: 0, upcoming: 0 },
   rating: { average: 0, totalReviews: 0 },
 });

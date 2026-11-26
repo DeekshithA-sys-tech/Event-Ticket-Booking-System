@@ -23,7 +23,7 @@ import {
 } from '../utils/ApiError.js';
 import { HTTP_STATUS } from '../constants/httpStatus.js';
 import { MESSAGES } from '../constants/messages.js';
-import { EVENT_STATUS, SEAT_STATUS, BOOKING_STATUS } from '../constants/eventStatus.js';
+import { EVENT_STATUS, SEAT_STATUS, BOOKING_STATUS, PAYMENT_STATUS } from '../constants/eventStatus.js';
 import { createModuleLogger } from '../utils/logger.js';
 
 const logger = createModuleLogger('BookingController');

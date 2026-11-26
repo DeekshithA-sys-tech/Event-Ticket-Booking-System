@@ -280,8 +280,11 @@ class AgentOrchestrator:
 
         # ── 2m. Handle Event Creation Intent ───────────────────────────────────
         is_create_event_query = (
-            any(p in user_msg.lower() for p in ["create event", "create an event", "add event", "host an event", "new event", "schedule an event"])
-            or (user_msg.lower().startswith("create ") and any(k in user_msg.lower() for k in ["show", "tickets", "price", "seats", "comedy", "music"]))
+            any(p in user_msg.lower() for p in [
+                "create event", "create an event", "create an enent", "create enent", "create a event",
+                "add event", "host an event", "new event", "schedule an event", "create event called", "create an event called"
+            ])
+            or (user_msg.lower().startswith("create ") and any(k in user_msg.lower() for k in ["show", "tickets", "price", "seats", "comedy", "music", "concert", "enent", "event"]))
         )
         if is_create_event_query:
             if role not in ["organizer", "admin"]:
@@ -665,20 +668,33 @@ class AgentOrchestrator:
                 )
 
         elif action == "create_event":
+            if role not in ["organizer", "admin"]:
+                return ChatResponse(
+                    conversation_id=conv_id,
+                    message=(
+                        "🔒 **Organizer Permission Required**\n\n"
+                        "Creating events is restricted to registered **Event Organizers** and **Administrators**.\n\n"
+                        "If you are an organizer, please log in with your organizer account to host and publish events."
+                    ),
+                    requires_confirmation=False,
+                )
             res = await tool_registry.execute("create_event", payload, token=token, user=user)
             if res.get("success") or res.get("statusCode") in [200, 201]:
                 ev_data = res.get("data", {})
                 ev_title = ev_data.get("title", payload.get("title", "Event"))
                 ev_id = ev_data.get("_id", "")
+                ev_status = ev_data.get("status", "draft")
+                status_label = "published to the public catalog" if ev_status == "published" else "submitted for Admin approval (Draft Status)"
                 return ChatResponse(
                     conversation_id=conv_id,
                     message=(
                         f"🎉 **Event Created Successfully!**\n\n"
-                        f"Your event **{ev_title}** has been published to the EventPulse catalog.\n"
+                        f"Your event **{ev_title}** has been {status_label}.\n"
                         f"- **Event ID:** `{ev_id}`\n"
                         f"- **Tickets Available:** {payload.get('totalSeats')}\n"
-                        f"- **Ticket Price:** ₹{payload.get('ticketPrice')}\n\n"
-                        f"Attendees can now discover it and reserve seats!"
+                        f"- **Ticket Price:** ₹{payload.get('ticketPrice')}\n"
+                        f"- **Status:** `{ev_status.upper()}`\n\n"
+                        f"You can review and manage it in your Organizer Dashboard under Managed Events."
                     ),
                     requires_confirmation=False,
                     tool_calls_used=[{"name": "create_event", "arguments": payload}],

@@ -283,7 +283,7 @@ export const OrganizerDashboardPage = () => {
             </div>
           </div>
           <p className="text-2xl font-bold text-indigo-600">
-            {overview?.bookings?.total || overview?.totalTicketsSold || 0}
+            {overview?.bookings?.ticketsSold ?? overview?.bookings?.totalTicketsSold ?? overview?.totalTicketsSold ?? overview?.bookings?.total ?? 0}
           </p>
         </div>
 
@@ -304,7 +304,9 @@ export const OrganizerDashboardPage = () => {
               <FiUsers className="w-4 h-4" />
             </div>
           </div>
-          <p className="text-2xl font-bold text-amber-600">82%</p>
+          <p className="text-2xl font-bold text-amber-600">
+            {overview?.occupancyRate || (overview?.occupancy != null ? `${overview.occupancy}%` : '0%')}
+          </p>
         </div>
       </div>
 
