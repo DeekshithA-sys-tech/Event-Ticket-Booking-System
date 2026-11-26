@@ -19,6 +19,29 @@ Features real-time visual seat map selection, atomic Redis-backed seat locking t
 
 ---
 
+## 🌐 Live Demo & Demo Accounts
+
+The full platform is deployed and publicly accessible with end-to-end integration across Vercel, Railway, MongoDB Atlas, and Redis:
+
+- **🌐 Live Web Application**: [https://event-ticket-booking-system-six.vercel.app](https://event-ticket-booking-system-six.vercel.app)
+- **⚡ Backend API Gateway**: [https://eventpulse-api-production-aff2cf4b.up.railway.app](https://eventpulse-api-production-aff2cf4b.up.railway.app)
+- **🤖 Python AI Microservice**: [https://eventpulse-ai-production-8a4e1166.up.railway.app](https://eventpulse-ai-production-8a4e1166.up.railway.app)
+- **📚 Swagger OpenAPI Documentation**: [https://eventpulse-api-production-aff2cf4b.up.railway.app/api-docs](https://eventpulse-api-production-aff2cf4b.up.railway.app/api-docs)
+
+### 🔑 Demo Login Credentials
+
+You can use the one-click **"Demo Credentials Quick Select"** buttons directly on the [Login Page](https://event-ticket-booking-system-six.vercel.app/login) or enter any of the pre-seeded role accounts:
+
+| Role | Email Address | Password | Permissions & Features |
+|---|---|---|---|
+| 👤 **Customer** | `customer@example.com` | `Password123!` | Interactive seat map booking, AI chat reservations & cancellations, PDF pass & QR code download, order history, event reviews |
+| 🎪 **Organizer** | `organizer@example.com` | `Password123!` | Create & publish events, view real-time sales analytics (revenue, occupancy rate, tickets sold volume), manage listings |
+| 🛡️ **Administrator** | `admin@example.com` | `Password123!` | Platform-wide management, immutable audit trail inspection, user directory, event status moderation & overrides |
+
+> 💡 **Guest Browsing**: You can explore live catalog events, view seat layouts, and test the **EventPulse AI Assistant** as a guest without signing in. Login is only required to confirm purchases or access protected dashboard tools.
+
+---
+
 ## 🏛️ System Architecture
 
 ```
@@ -224,8 +247,8 @@ Run the entire platform (Express API, React Frontend, MongoDB, Redis) with a sin
 
 ```bash
 # Clone the repository
-git clone https://github.com/your-username/event-ticket-booking.git
-cd event-ticket-booking
+git clone https://github.com/DeekshithA-sys-tech/Event-Ticket-Booking-System.git
+cd Event-Ticket-Booking-System
 
 # Build and start all services
 docker compose up --build -d
