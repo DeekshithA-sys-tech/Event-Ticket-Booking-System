@@ -286,6 +286,8 @@ class ToolRegistry:
                 "seatIds": arguments.get("seat_ids", []),
                 "paymentMethod": arguments.get("payment_method", "mock"),
             }
+            # Attempt locking seats first to ensure lock ownership
+            await express_client.post("/bookings/lock-seats", body=body, token=token)
             return await express_client.post("/bookings/confirm", body=body, token=token)
 
         # 7. Cancel Booking (Write)

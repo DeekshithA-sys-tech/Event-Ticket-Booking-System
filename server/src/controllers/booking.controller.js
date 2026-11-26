@@ -322,18 +322,19 @@ export const confirmBooking = asyncHandler(async (req, res) => {
   const { eventId, seatIds } = req.body;
   const userId = req.user._id;
 
-  const alreadyBooked = await bookingRepo.userHasBookingForEvent(userId, eventId);
-  if (alreadyBooked) {
-    throw new ConflictError(MESSAGES.BOOKING.DOUBLE_BOOKING);
-  }
-
-  const { valid, expiredSeat } = await verifyLocks(eventId, seatIds, userId.toString());
+  // Verify seat locks held by user, or acquire locks if seats are available
+  let { valid, expiredSeat } = await verifyLocks(eventId, seatIds, userId.toString());
   if (!valid) {
-    throw new ConflictError(
-      expiredSeat
-        ? `Lock on seat ${expiredSeat} has expired. Please select seats again.`
-        : MESSAGES.BOOKING.SEATS_LOCK_EXPIRED
-    );
+    const lockResult = await acquireSeatLocks(eventId, seatIds, userId);
+    if (lockResult.success) {
+      valid = true;
+    } else {
+      throw new ConflictError(
+        expiredSeat
+          ? `Lock on seat ${expiredSeat} has expired. Please select seats again.`
+          : MESSAGES.BOOKING.SEATS_LOCK_EXPIRED
+      );
+    }
   }
 
   const event = await eventRepo.findEventById(eventId);
