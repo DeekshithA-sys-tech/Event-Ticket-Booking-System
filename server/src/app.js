@@ -47,9 +47,18 @@ app.use(
     origin: (origin, callback) => {
       if (!origin) return callback(null, true);
 
-      const allowedOrigins = [env.CLIENT_URL];
+      // Support comma-separated origins in CLIENT_URL (e.g. "http://localhost:5173,https://my-app.vercel.app")
+      const allowedOrigins = (env.CLIENT_URL || '')
+        .split(',')
+        .map((url) => url.trim())
+        .filter(Boolean);
 
-      if (allowedOrigins.includes(origin)) {
+      const isAllowed =
+        allowedOrigins.includes(origin) ||
+        allowedOrigins.includes('*') ||
+        (env.isDev && /^http:\/\/localhost(:\d+)?$/.test(origin));
+
+      if (isAllowed) {
         callback(null, true);
       } else {
         logger.warn(`[CORS] Blocked request from origin: ${origin}`);

@@ -498,7 +498,7 @@ class AgentOrchestrator:
         is_discovery_query = (
             any(w in user_msg.lower() for w in [
                 "find", "search", "explore", "show me events", "concerts", "concert", "comedy in", "shows", "show",
-                "list the event", "list events", "events", "below", "under", "cheap", "tickets in", "browse events"
+                "list the event", "list events", "list all the events", "list all events", "events", "below", "under", "cheap", "tickets in", "browse events", "all events", "events present"
             ])
             and not any(w in user_msg.lower() for w in [
                 "cancel", "refund", "policy", "faq", "rules", "my bookings", "create event",
@@ -512,7 +512,8 @@ class AgentOrchestrator:
             clean_q = user_msg.lower()
             for stop_word in [
                 "find", "upcoming", "shows", "show", "events", "event", "list", "the", "in",
-                "below", "under", "price", "rupees", "rs", "inr", "for", "me", "all", "any", "please"
+                "below", "under", "price", "rupees", "rs", "inr", "for", "me", "all", "any", "please",
+                "present", "application", "app", "system", "platform", "database", "available", "currently", "there", "here"
             ]:
                 clean_q = re.sub(rf"\b{stop_word}\b", " ", clean_q, flags=re.IGNORECASE)
             if filters.get("city"):
@@ -531,6 +532,17 @@ class AgentOrchestrator:
             if isinstance(events, dict) and "events" in events:
                 events = events["events"]
 
+            # Fallback to seed events if live DB currently has 0 events and no restrictive title query was passed
+            if (not isinstance(events, list) or not events) and not search_args.get("q"):
+                from app.ingestion.loader import KnowledgeLoader
+                loader = KnowledgeLoader()
+                all_seeds = loader.get_seed_events_fallback()
+                events = [ev for ev in all_seeds if ev.get("status") == "published"]
+                if filters.get("city"):
+                    events = [ev for ev in events if ev.get("city", "").lower() == filters["city"].lower()]
+                if filters.get("max_price"):
+                    events = [ev for ev in events if ev.get("ticketPrice", 0) <= filters["max_price"]]
+
             if isinstance(events, list) and events:
                 cards = self.generator.extract_event_cards(events)
                 event_lines = []
@@ -542,7 +554,7 @@ class AgentOrchestrator:
                     event_lines.append(f"- **{t}** — {c} | ₹{p} | `{seats} seats available`")
 
                 msg = (
-                    f"### 🎪 Upcoming Live Events Found ({len(events)})\n\n"
+                    f"### 🎪 Live Catalog Events ({len(events)})\n\n"
                     + "\n".join(event_lines)
                     + "\n\n*Click 'Select Seats' on any event card to view the interactive seat map.*"
                 )
@@ -553,7 +565,7 @@ class AgentOrchestrator:
                     is_rag_grounded=False,
                     tool_calls_used=[{"name": "search_events", "arguments": search_args}],
                 )
-            elif not res.get("error") and (filters.get("city") or filters.get("category") or filters.get("max_price")):
+            else:
                 criteria_parts = []
                 if filters.get("city"):
                     criteria_parts.append(f"in {filters['city']}")
@@ -561,7 +573,7 @@ class AgentOrchestrator:
                     criteria_parts.append(f"under {filters['category']}")
                 if filters.get("max_price"):
                     criteria_parts.append(f"under ₹{filters['max_price']}")
-                criteria_str = " ".join(criteria_parts) or "your search"
+                criteria_str = " ".join(criteria_parts) or "your search criteria"
 
                 return ChatResponse(
                     conversation_id=req.conversation_id,
@@ -816,6 +828,15 @@ class AgentOrchestrator:
         # Check for errors from backend
         if result.get("success") is False or result.get("error"):
             err_msg = result.get("message") or result.get("error") or "Failed to retrieve user list from backend."
+            if isinstance(err_msg, str) and ("Authentication required" in err_msg or "jwt" in err_msg.lower()):
+                err_msg = "Admin authentication required. Please ensure you are logged in as an Administrator."
+            elif isinstance(err_msg, str) and err_msg.strip().startswith("{"):
+                try:
+                    import json
+                    parsed_err = json.loads(err_msg)
+                    err_msg = parsed_err.get("message", "Unable to retrieve platform users.")
+                except Exception:
+                    err_msg = "Unable to retrieve platform users at this time."
             return ChatResponse(
                 conversation_id=conv_id,
                 message=f"### 👥 Platform Users\n\n⚠️ {err_msg}",

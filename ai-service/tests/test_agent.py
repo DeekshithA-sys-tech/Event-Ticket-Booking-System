@@ -62,7 +62,7 @@ async def test_search_events_tool_dispatch():
         response = client.post("/api/chat", json=req)
         assert response.status_code == 200
         data = response.json()
-        assert "Upcoming Live Events Found" in data["message"]
+        assert "Neon Cyber Symphony 2026" in data["message"]
         assert len(data["event_cards"]) > 0
         assert data["event_cards"][0]["title"] == "Neon Cyber Symphony 2026"
 
@@ -502,7 +502,5 @@ def test_adversarial_prompt_injection_refusal():
     assert not data.get("requires_confirmation")
     msg = data["message"].lower()
     assert "cannot override" in msg or "policy" in msg
-
-
 
 

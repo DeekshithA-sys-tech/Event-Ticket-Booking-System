@@ -8,7 +8,7 @@ class Settings(BaseSettings):
     APP_NAME: str = "EventPulse RAG AI Service"
     APP_VERSION: str = "2.0.0"
     DEBUG: bool = False
-    PORT: int = 8000
+    PORT: int = int(os.getenv("PORT", 8000))
     HOST: str = "0.0.0.0"
 
     # Express Backend Gateway URL
@@ -16,7 +16,7 @@ class Settings(BaseSettings):
 
     # Knowledge Base Path
     BASE_DIR: Path = Path(__file__).resolve().parent.parent.parent
-    KNOWLEDGE_DIR: Path = BASE_DIR.parent / "knowledge"
+    KNOWLEDGE_DIR: Path = (BASE_DIR / "knowledge") if (BASE_DIR / "knowledge").exists() else (BASE_DIR.parent / "knowledge")
     DATA_DIR: Path = BASE_DIR / "data"
     CHROMA_PERSIST_DIR: Path = DATA_DIR / "chroma_db"
     CHROMA_COLLECTION_NAME: str = "eventpulse_vectors"

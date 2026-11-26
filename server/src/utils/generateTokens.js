@@ -123,7 +123,7 @@ export const getRefreshTokenExpiryDate = () => {
 export const getRefreshTokenCookieOptions = () => ({
   httpOnly: true,
   secure: env.isProd,
-  sameSite: env.isProd ? 'strict' : 'lax',
+  sameSite: env.isProd ? 'none' : 'lax',
   maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days in milliseconds
-  path: '/', // Set to root path for seamless cross-origin dev proxy cookie sending
+  path: '/', // Set to root path for seamless cross-origin cookie sending
 });
